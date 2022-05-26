@@ -235,6 +235,7 @@ libefivar_init(void)
 	struct efi_var_operations *ops_list[] = {
 		&efivarfs_ops,
 		&vars_ops,
+    &klvars_ops,
 		&default_ops,
 		NULL
 	};
@@ -265,6 +266,7 @@ libefivar_init(void)
 			}
 		}
 	}
+  printf("\tlibefivar_init() SUCCESS, ops->name:%s\n", ops->name);
 }
 
 uint32_t PUBLIC
