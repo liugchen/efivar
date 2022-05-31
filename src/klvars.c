@@ -37,6 +37,7 @@
 #define KLVARS_TOOL_NAME "klvars"
 #define BIOS_BACKUP_PATH "./rom.bin"
 #define VARS_LAYOUT_NAME "NVRAM"
+#define BIOS_GENERATE_PATH            "./generate.bin"
 
 static	LIST_HEAD(klvars_list);
 
@@ -784,6 +785,52 @@ klvars_chmod_variable(efi_guid_t guid, const char *name, mode_t mode)
 	return rc;
 }
 
+/**
+ * @description: 
+ *   Save bios image data read from flash chip into a file.
+ * 
+ * @param {type} 
+ * @return: 
+ */
+static int store_bios_to_file (uint8_t *buffer, int len)
+{
+  FILE   *fp;
+
+  if (!buffer || len <= 0) {
+    DBG_ERR ("Invalid parameters.\n");
+    return 1;
+  }
+  if (!klutil_ctx.generate_file) {
+    //
+    // Update file path not set, use the default update file.
+    klutil_ctx.generate_file = (char *)malloc (PATH_MAX);
+    if (!klutil_ctx.generate_file) {
+      DBG_ERR ("Failed to allocate buffer!\n");
+      return 1;
+    }
+#if 0    
+    memset (klutil_ctx.generate_file, 0, PATH_MAX);
+    memcpy (klutil_ctx.generate_file, DEFAULT_BIOS_IMAGE, strlen(DEFAULT_BIOS_IMAGE));
+#else
+    char src_str[PATH_MAX] = BIOS_GENERATE_PATH;
+    strncpy (klutil_ctx.generate_file, src_str, strlen(src_str));
+    klutil_ctx.generate_file[strlen(src_str)] = 0;
+#endif
+  }
+  DBG_INFO ("Generate file: %s\n", klutil_ctx.generate_file);
+  
+  fp = fopen (klutil_ctx.generate_file, "wb");
+  if (!fp) {
+    DBG_ERR ("Failed to open flash backup file.\n");
+    return 1;
+  }
+  fwrite (buffer, 1, len, fp);
+
+  fclose (fp);
+
+  return 0;
+}
+
 static int
 klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		 size_t data_size, uint32_t attributes, mode_t mode)
@@ -808,12 +855,23 @@ klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		errno = ENOSPC;
 		return -1;
 	}
-  DBG_INFO ("[%s] name= %s data_size=%zd attributes=0x%x mode=0x%x!\n", __func__, name, data_size, attributes, (int)mode);
+  //DBG_INFO ("[%s] name= %s data_size=%zd attributes=0x%x mode=0x%x!\n", __func__, name, data_size, attributes, (int)mode);
   dump_buffer(data, data_size);
   ret = uefivar_get_variable(guid, name, &old_data,
 		      &old_data_size, &old_attributes);
+  dump_buffer(old_data, old_data_size);
   DBG_INFO ("[%s] data_size=%zd attributes=0x%x !\n", __func__, old_data_size, old_attributes);
-	
+	ret = uefivar_set_variable(guid, name, data,
+		 data_size, attributes, mode, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
+
+  DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
+  memcpy( (uint8_t *)klutil_ctx.backup_data + layout->head->start, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
+  if(store_bios_to_file ((uint8_t *)klutil_ctx.backup_data, klutil_ctx.bkfile_size)) {
+    DBG_ERR ("Generate update file fail.\n");
+    return -1;
+  } else {
+    DBG_PROG ("Generate update file success.\n");
+  }
 	return ret;
 }
 

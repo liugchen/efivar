@@ -2072,6 +2072,116 @@ int change_setup_default1 (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_I
   return ret;  
 }
 #endif
+int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
+		 size_t data_size, uint32_t attributes, mode_t mode, uint8_t *nv_fv_buff, uint32_t buff_len) {
+  int ret = -1;
+  //static size_t npos = 0;
+  list_t *pos;
+  uint8_t state = 0;
+  char ret_name[NAME_MAX+1] = {0};
+	efi_guid_t ret_guid;
+  klvar_entry_t *var;
+  uint32_t attr;
+  char *databk;
+  mode = mode;
+
+  // DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  list_for_each(pos, &var_list) {
+    var = list_entry(pos, klvar_entry_t, list);
+    UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
+    // DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+    if (var->type == NORMAL_VAR_TYPE) {
+        memcpy(&ret_guid, &((DEFAULT_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+        attr = ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes;
+        state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    } else if (var->type == AUTH_VAR_TYPE) {
+        memcpy(&ret_guid, &((AUTHENTICATED_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+        attr = ((AUTHENTICATED_VARIABLE_HEADER *)var->header)->Attributes;
+        state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    }
+    if (state != 0x3F) {
+      DBG_INFO ("[%s] state= 0x%x !\n", __func__, state);
+      continue;
+    }
+    // DBG_INFO ("[%s] *attributes= 0x%x !\n", __func__, *attributes);
+    // dump_buffer(&guid,sizeof(efi_guid_t));
+    // dump_buffer(&ret_guid,sizeof(efi_guid_t));
+    // DBG_INFO ("[%s] sizeof(efi_guid_t)= %ld !\n", __func__, sizeof(efi_guid_t));
+    if (memcmp(&ret_guid, &guid, sizeof(efi_guid_t)) != 0) {
+      continue;
+    }
+    // dump_buffer((void *)name,strlen(name));
+    // dump_buffer(ret_name,strlen(ret_name));
+    if (strcmp(name, ret_name) != 0) {
+      continue;
+    }
+
+    DBG_INFO ("[%s] attr= 0x%x to 0x%x !\n", __func__, attr, attributes);
+    if (attr != attributes) {
+      DBG_INFO ("[%s] change attr= 0x%x to 0x%x !\n", __func__, attr, attributes);
+      if (var->type == NORMAL_VAR_TYPE) {
+          ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes = attributes;
+      } else if (var->type == AUTH_VAR_TYPE) {
+          ((AUTHENTICATED_VARIABLE_HEADER *)var->header)->Attributes = attributes;
+      }
+      memcpy( nv_fv_buff + var->offset, var->header, var->headerSize);
+    }
+
+    if (var->dataSize < data_size)
+    {
+      DBG_ERR("[%s] var->dataSize is not enough !\n", __func__);
+      return -2;
+    }
+    //change data
+    if (strcmp(name, "BootOrder") == 0)
+    {
+      if (data_size == var->dataSize)
+      {
+        memcpy(var->data, data, data_size);
+      } else if (data_size > var->dataSize) {
+        //shang mian yi jing chuli
+      } else {
+        if (!(databk = calloc(var->dataSize, sizeof (uint8_t)))) {
+          DBG_ERR("could not allocate memory");
+          return -1;
+        }
+        memcpy(databk, var->data, var->dataSize);
+        memcpy(var->data, data, data_size);
+        int skip;
+        uint32_t size = (uint32_t)data_size;
+        for (uint32_t i = 0; i < var->dataSize/2; i++)
+        {
+          for (uint32_t j = 0; j < data_size/2; j++)
+          {
+            if (((uint16_t *)databk)[i] == ((uint16_t *)var->data)[j]) {
+              skip = 1;
+            }
+          }
+          if (!skip) {
+            memcpy( var->data + size, &((uint16_t *)databk)[i], sizeof(uint16_t));
+            size += sizeof(uint16_t);
+          }          
+          skip = 0;
+        }
+      }
+    } else {
+      memcpy(var->data, data, data_size);
+    }
+    if (var->offset + var->headerSize + var->nameSize + var->dataSize > buff_len)
+    {
+      DBG_INFO("[%s] > buf_len !\n", __func__);
+      return -1;
+    }
+    
+    memcpy( nv_fv_buff + var->offset + var->headerSize + var->nameSize, var->data, var->dataSize);
+    dump_buffer(nv_fv_buff + var->offset + var->headerSize + var->nameSize, var->dataSize);
+    ret = 1;
+    return ret;
+  }
+  DBG_INFO("[%s] no match !\n", __func__);
+
+  return -1;
+}
 
 int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
 		  size_t *data_size, uint32_t *attributes) {

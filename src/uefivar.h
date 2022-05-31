@@ -453,6 +453,8 @@ int parse_nv_frame(uint8_t *nv_fv_buff, uint32_t buff_len);
 int uefivar_get_next_variable_name(efi_guid_t **guid, char **name);
 int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
 		  size_t *data_size, uint32_t *attributes);
+int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
+		  size_t data_size, uint32_t attributes, mode_t mode, uint8_t *nv_fv_buff, uint32_t buff_len); 
 #endif
 
 
