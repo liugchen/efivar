@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "Uefi.h"
+#include "guid.h"
 
 #pragma pack(1)
 typedef struct {
@@ -449,6 +450,9 @@ int change1_first_boot_dev (uint8_t *nv_fv_buff, uint32_t buff_len,KLSETUP_VAR_I
 int get_variable_var (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *var_info,wchar_t *seek_var_name);
 
 int parse_nv_frame(uint8_t *nv_fv_buff, uint32_t buff_len);
+int uefivar_get_next_variable_name(efi_guid_t **guid, char **name);
+int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
+		  size_t *data_size, uint32_t *attributes);
 #endif
 
 

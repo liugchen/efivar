@@ -110,7 +110,7 @@ typedef struct efi_kernel_variable_64_t {
 	uint64_t	Status;
 	uint32_t	Attributes;
 } PACKED efi_kernel_variable_64_t;
-
+#if 0
 static ssize_t
 get_file_data_size(int dfd, char *name)
 {
@@ -220,7 +220,7 @@ err:
 	errno = saved_errno;
 	return sixtyfour_bit;
 }
-
+#endif
 static int
 get_size_from_file(const char *filename, size_t *retsize)
 {
@@ -585,8 +585,9 @@ klvars_probe(void)
     DBG_ERR ("ERROR: parse_nv_frame FAIILED!\n");
     goto err;
   }
+  return 1;
 err:
-  return ret;  
+  return 0;  
 }
 
 static int
@@ -631,7 +632,7 @@ klvars_get_variable_attributes(efi_guid_t guid, const char *name,
 	size_t data_size;
 	uint32_t attribs;
 
-	ret = efi_get_variable(guid, name, &data, &data_size, &attribs);
+	ret = uefivar_get_variable(guid, name, &data, &data_size, &attribs);
 	if (ret < 0) {
 		efi_error("efi_get_variable() failed");
 		return ret;
@@ -647,100 +648,9 @@ static int
 klvars_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
 		  size_t *data_size, uint32_t *attributes)
 {
-	int errno_value;
 	int ret = -1;
-	uint8_t *buf = NULL;
-	size_t bufsize = -1;
-	char *path = NULL;
-	int rc;
-	int fd = -1;
-	int ratelimit;
-
-	/*
-	 * The kernel rate limiter hits us if we go faster than 100 efi
-	 * variable reads per second as non-root.  So if we're not root, just
-	 * delay this long after each read.  The user is not going to notice.
-	 *
-	 * 1s / 100 = 10000us.
-	 */
-	ratelimit = geteuid() == 0 ? 0 : 10000;
-
-	rc = asprintf(&path, "%s%s-" GUID_FORMAT "/raw_var", get_klvars_path(),
-		      name, GUID_FORMAT_ARGS(&guid));
-	if (rc < 0) {
-		efi_error("asprintf failed");
-		goto err;
-	}
-
-	fd = open(path, O_RDONLY);
-	if (fd < 0) {
-		efi_error("open(%s, O_RDONLY) failed", path);
-		goto err;
-	}
-
-	usleep(ratelimit);
-	rc = read_file(fd, &buf, &bufsize);
-	if (rc < 0) {
-		efi_error("read_file(%s) failed", path);
-		goto err;
-	}
-
-	bufsize -= 1; /* read_file pads out 1 extra byte to NUL it */
-
-	if (is_64bit()) {
-		efi_kernel_variable_64_t *var64;
-
-		if (bufsize != sizeof(efi_kernel_variable_64_t)) {
-			errno = EFBIG;
-			efi_error("file size is wrong for 64-bit variable (%zd of %zd)",
-				  bufsize, sizeof(efi_kernel_variable_64_t));
-			goto err;
-		}
-
-		var64 = (void *)buf;
-		*data = malloc(var64->DataSize);
-		if (!*data) {
-			efi_error("malloc failed");
-			goto err;
-		}
-		memcpy(*data, var64->Data, var64->DataSize);
-		*data_size = var64->DataSize;
-		*attributes = var64->Attributes;
-	} else {
-		efi_kernel_variable_32_t *var32;
-
-		if (bufsize != sizeof(efi_kernel_variable_32_t)) {
-			efi_error("file size is wrong for 32-bit variable (%zd of %zd)",
-				  bufsize, sizeof(efi_kernel_variable_32_t));
-			errno = EFBIG;
-			goto err;
-		}
-
-		var32 = (void *)buf;
-		*data = malloc(var32->DataSize);
-		if (!*data) {
-			efi_error("malloc failed");
-			goto err;
-		}
-		memcpy(*data, var32->Data, var32->DataSize);
-		*data_size = var32->DataSize;
-		*attributes = var32->Attributes;
-	}
-
-	ret = 0;
-err:
-	errno_value = errno;
-
-	if (buf)
-		free(buf);
-
-	if (fd >= 0)
-		close(fd);
-
-	if (path)
-		free(path);
-
-	errno = errno_value;
+  ret = uefivar_get_variable(guid, name, data,
+		  data_size, attributes);
 	return ret;
 }
 
@@ -878,10 +788,13 @@ static int
 klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		 size_t data_size, uint32_t attributes, mode_t mode)
 {
-	int errno_value;
-	size_t len;
+	// int errno_value;
+	// size_t len;
 	int ret = -1;
-	int fd = -1;
+	// int fd = -1;
+  uint8_t *old_data;
+  size_t old_data_size;
+  uint32_t old_attributes;
 
 	if (strlen(name) > 1024) {
 		efi_error("variable name size is too large (%zd of 1024)",
@@ -895,89 +808,12 @@ klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		errno = ENOSPC;
 		return -1;
 	}
-
-	char *path;
-	int rc = asprintf(&path, "%s%s-" GUID_FORMAT "/data", get_klvars_path(),
-			  name, GUID_FORMAT_ARGS(&guid));
-	if (rc < 0) {
-		efi_error("asprintf failed");
-		goto err;
-	}
-
-	len = rc;
-
-	if (!access(path, F_OK)) {
-		rc = efi_del_variable(guid, name);
-		if (rc < 0) {
-			efi_error("efi_del_variable failed");
-			goto err;
-		}
-	}
-	char *newvar;
-	if (asprintfa(&newvar, "%s%s", get_klvars_path(), "new_var") < 0) {
-		efi_error("asprintfa failed");
-		goto err;
-	}
-
-	if (is_64bit()) {
-		efi_kernel_variable_64_t var64 = {
-			.VendorGuid = guid,
-			.DataSize = data_size,
-			.Status = 0,
-			.Attributes = attributes
-			};
-
-		for (int i = 0; name[i] != '\0'; i++)
-			var64.VariableName[i] = name[i];
-		memcpy(var64.Data, data, data_size);
-
-		fd = open(newvar, O_WRONLY);
-		if (fd < 0) {
-			efi_error("open(%s, O_WRONLY) failed", newvar);
-			goto err;
-		}
-
-		rc = write(fd, &var64, sizeof(var64));
-	} else {
-		efi_kernel_variable_32_t var32 = {
-			.VendorGuid = guid,
-			.DataSize = data_size,
-			.Status = 0,
-			.Attributes = attributes
-			};
-		for (int i = 0; name[i] != '\0'; i++)
-			var32.VariableName[i] = name[i];
-		memcpy(var32.Data, data, data_size);
-
-		fd = open(newvar, O_WRONLY);
-		if (fd < 0) {
-			efi_error("open(%s, O_WRONLY) failed", newvar);
-			goto err;
-		}
-
-		rc = write(fd, &var32, sizeof(var32));
-	}
-
-	if (rc >= 0)
-		ret = 0;
-	else
-		efi_error("write() failed");
-
-	/* this is inherently racy, but there's no way to do it correctly with
-	 * this kernel API.  Fortunately, all directory contents get created
-	 * with root.root ownership and an effective umask of 177 */
-	path[len-5] = '\0';
-	_klvars_chmod_variable(path, mode);
-err:
-	errno_value = errno;
-
-	if (path)
-		free(path);
-
-	if (fd >= 0)
-		close(fd);
-
-	errno = errno_value;
+  DBG_INFO ("[%s] name= %s data_size=%zd attributes=0x%x mode=0x%x!\n", __func__, name, data_size, attributes, (int)mode);
+  dump_buffer(data, data_size);
+  ret = uefivar_get_variable(guid, name, &old_data,
+		      &old_data_size, &old_attributes);
+  DBG_INFO ("[%s] data_size=%zd attributes=0x%x !\n", __func__, old_data_size, old_attributes);
+	
 	return ret;
 }
 
@@ -985,10 +821,9 @@ static int
 klvars_get_next_variable_name(efi_guid_t **guid, char **name)
 {
 	int rc;
-	const char *vp = get_klvars_path();
-	rc = generic_get_next_variable_name(vp, guid, name);
+	rc = uefivar_get_next_variable_name(guid, name);
 	if (rc < 0)
-		efi_error("generic_get_next_variable_name(%s,...) failed", vp);
+		efi_error("generic_get_next_variable_name() failed");
 	return rc;
 }
 

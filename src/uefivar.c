@@ -31,8 +31,10 @@ Revision History:
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
-
+#include <stddef.h>
 #include "uefivar.h"
+#include "list.h"
+#include "guid.h"
 
 #define DEBUG 1
 #define msg_gerr printf //efi_error
@@ -63,6 +65,23 @@ void dump_buffer (void *buffer, int len)
 }
 
 #define VAR_TYPE_MAX                             2
+
+/* global variables */
+static	LIST_HEAD(var_list);
+
+typedef struct _klvar_entry {
+  uint32_t  type;
+  uint32_t  offset;
+  uint32_t  totalSize;
+  uint32_t  headerSize;
+  uint32_t  nameSize;
+  uint32_t  dataSize;
+  char      *header;
+  char      *name;
+  char      *data;
+  list_t    list;
+} klvar_entry_t;
+klvar_entry_t klvar_entry;
 
 UINT8   var_type                               = 0;
 
@@ -716,7 +735,7 @@ UnicodeStrToAsciiStr (
 {
   CHAR8                               *ReturnValue;
 
-  dump_buffer ((uint8_t *)Source, 0x10);
+  // dump_buffer ((uint8_t *)Source, 0x10);
 
   ReturnValue = Destination;
   while (*Source != '\0') {
@@ -882,11 +901,14 @@ int getVarStoreHeaderInfo( uint8_t *nv_fv_buff, uint32_t buff_len) {
 #define AUTH_VAR_TYPE   1
 #define INVALID_START_ID (0xFFFF)
 #define VALID_START_ID (0x55AA)
-typedef struct {
-    char *name;
-    char *data;
-} VAR_INFO;
-int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len) {
+
+int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len, list_t *head) {
+  nvType nvtype;
+  UINT8 varType;
+  uint32_t offset = gVolumeHeader.HeaderLength + sizeof(VARIABLE_STORE_HEADER);
+  //uint32_t size = 0;
+  uint32_t hdrsize;
+  
   if (!nv_fv_buff || (buff_len < sizeof(EFI_FIRMWARE_VOLUME_HEADER) + sizeof(VARIABLE_STORE_HEADER)))
   {
     DBG_ERR ("[%s]Inalid STORE FV!\n",__func__);
@@ -897,11 +919,7 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len) {
     DBG_ERR ("[%s]gVolumeHeader.HeaderLength is Inalid!\n",__func__);
     return 2;
   }
-  nvType nvtype;
-  UINT8 varType;
-  uint32_t offset = gVolumeHeader.HeaderLength + sizeof(VARIABLE_STORE_HEADER);
-  //uint32_t size = 0;
-  uint32_t hdrsize;
+
   nvtype = getNvType( nv_fv_buff, var_nv_guid);
   if (nvtype != VOLUME_HEADER)
   {
@@ -922,67 +940,72 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len) {
   dump_buffer(nv_fv_buff+offset, 0x100);
   while (offset < (gStoreHeader.Size + gVolumeHeader.HeaderLength))
   {
-    if (varType == NORMAL_VAR_TYPE) {
-      DEFAULT_VARIABLE_HEADER *variableHeader = (DEFAULT_VARIABLE_HEADER *)malloc (sizeof(DEFAULT_VARIABLE_HEADER));
-      DBG_INFO ("[%s]DEFAULT_VARIABLE offset=0x%x !\n", __func__, offset); 
-      memcpy( variableHeader, nv_fv_buff+offset, hdrsize);
-      offset += hdrsize;
-      dump_buffer(variableHeader, hdrsize);
-      if (variableHeader->StartId == INVALID_START_ID)
-      {
-        break;
-      }
-      if (variableHeader->StartId != VALID_START_ID)
-      {
-        DBG_INFO ("[%s]START_ID ERR, variableHeader->StartId=0x%x !\n", __func__, variableHeader->StartId);
-        return 5;
-      }
-      VAR_INFO varinfo;
-      varinfo.name = (char *)malloc( variableHeader->NameSize);
-      memcpy( varinfo.name, nv_fv_buff+offset, variableHeader->NameSize);
-      offset += variableHeader->NameSize;
-      dump_buffer(varinfo.name, variableHeader->NameSize);
-
-      varinfo.data = (char *)malloc( variableHeader->DataSize);
-      memcpy( varinfo.data, nv_fv_buff+offset, variableHeader->DataSize);
-      offset += variableHeader->DataSize;
-      dump_buffer(varinfo.data, variableHeader->DataSize);
-      
-      offset = _INTSIZEOF(offset); 
-    } else if ( varType == AUTH_VAR_TYPE ) {
-      AUTHENTICATED_VARIABLE_HEADER *variableHeader = (AUTHENTICATED_VARIABLE_HEADER *)malloc (sizeof(AUTHENTICATED_VARIABLE_HEADER));
-      DBG_INFO ("[%s]AUTHENTICATED offset=0x%x !\n", __func__, offset);
-      memcpy( variableHeader, nv_fv_buff+offset, hdrsize);
-      offset += hdrsize;
-      dump_buffer(variableHeader, hdrsize);
-      if (variableHeader->StartId == INVALID_START_ID)
-      {
-        break;
-      }
-      if (variableHeader->StartId != VALID_START_ID)
-      {
-        DBG_INFO ("[%s]START_ID ERR, variableHeader->StartId=0x%x !\n", __func__, variableHeader->StartId);
-        return 5;
-      }
-      VAR_INFO varinfo;
-      varinfo.name = (char *)malloc( variableHeader->NameSize);
-      memcpy( varinfo.name, nv_fv_buff+offset, variableHeader->NameSize);
-      offset += variableHeader->NameSize;
-      dump_buffer(varinfo.name, variableHeader->NameSize);
-
-      varinfo.data = (char *)malloc( variableHeader->DataSize);
-      memcpy( varinfo.data, nv_fv_buff+offset, variableHeader->DataSize);
-      offset += variableHeader->DataSize;
-      dump_buffer(varinfo.data, variableHeader->DataSize);
-      
-      offset = _INTSIZEOF(offset);
+    klvar_entry_t *entry;
+    entry = calloc(1, sizeof(klvar_entry_t));
+    if (!entry) {
+      DBG_ERR("calloc(1, %zd) failed", sizeof(klvar_entry_t));
+      return 6;
     }
+    entry->type = (uint32_t)varType;
+    if (entry->type == NORMAL_VAR_TYPE) {
+      entry->offset = offset;
+      entry->headerSize = sizeof(DEFAULT_VARIABLE_HEADER);
+      entry->header = (char *)malloc (sizeof(DEFAULT_VARIABLE_HEADER));
+      DBG_INFO ("[%s]DEFAULT_VARIABLE offset=0x%x !\n", __func__, offset); 
+      memcpy( entry->header, nv_fv_buff+offset, hdrsize);
+      offset += hdrsize;
+      dump_buffer(entry->header, hdrsize);
+      if (((DEFAULT_VARIABLE_HEADER *)entry->header)->StartId == INVALID_START_ID) {
+        break;
+      }
+      if (((DEFAULT_VARIABLE_HEADER *)entry->header)->StartId != VALID_START_ID) {
+        DBG_INFO ("[%s]START_ID ERR, StartId=0x%x !\n", __func__, ((DEFAULT_VARIABLE_HEADER *)entry->header)->StartId);
+        return 5;
+      }
+      entry->nameSize = ((DEFAULT_VARIABLE_HEADER *)entry->header)->NameSize;
+      entry->dataSize = ((DEFAULT_VARIABLE_HEADER *)entry->header)->DataSize;
+    } else if ( entry->type == AUTH_VAR_TYPE ) {
+      entry->offset = offset;
+      entry->headerSize = sizeof(AUTHENTICATED_VARIABLE_HEADER);
+      entry->header = (char *)malloc (sizeof(AUTHENTICATED_VARIABLE_HEADER));
+      DBG_INFO ("[%s]AUTHENTICATED_VARIABLE offset=0x%x !\n", __func__, offset); 
+      memcpy( entry->header, nv_fv_buff+offset, hdrsize);
+      offset += hdrsize;
+      dump_buffer(entry->header, hdrsize);
+      if (((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->StartId == INVALID_START_ID) {
+        break;
+      }
+      if (((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->StartId != VALID_START_ID) {
+        DBG_INFO ("[%s]START_ID ERR, StartId=0x%x !\n", __func__, ((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->StartId);
+        return 5;
+      }
+      entry->nameSize = ((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->NameSize;
+      entry->dataSize = ((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->DataSize;
+    }
+    entry->name = (char *)malloc( entry->nameSize);
+    memcpy( entry->name, nv_fv_buff+offset, entry->nameSize);
+    offset += entry->nameSize;
+    dump_buffer(entry->name, entry->nameSize);
 
+    entry->data = (char *)malloc( entry->dataSize);
+    memcpy( entry->data, nv_fv_buff+offset, entry->dataSize);
+    offset += entry->dataSize;
+    dump_buffer(entry->data, entry->dataSize);
     
-  }
-  
-  
+    offset = _INTSIZEOF(offset);
+    entry->totalSize = offset - entry->offset;
 
+    //add to list
+    list_add_tail(&(entry->list), head);
+  }
+  DBG_INFO ("[%s] end !\n", __func__);
+
+  list_t *pos;
+  klvar_entry_t *var;
+  list_for_each(pos, head) {
+    var = list_entry(pos, klvar_entry_t, list);
+    DBG_INFO ("[%s] var->offset= 0x%x !\n", __func__, var->offset);
+  }
   return 0;
 }
 // parse the data of raw variable data, i.e. data from the VARIABLE area of the BIOS.
@@ -1008,7 +1031,8 @@ int parse_nv_frame(uint8_t *nv_fv_buff, uint32_t buff_len) {
     //
     GetAuthenticatedFlag((void *)nv_fv_buff);
     DBG_INFO ("[%s] var_type=%d !\n", __func__, var_type);
-    getVariableInfo(nv_fv_buff, buff_len);
+    getVariableInfo(nv_fv_buff, buff_len, &var_list);
+    DBG_INFO ("[%s] list size =%zd !\n", __func__, list_size(&var_list));
 
   } else if (nvtype == STORE_HEADER) {
     DBG_ERR ("[%s]Not support nv type(STORE_HEADER)!\n",__func__);
@@ -2049,3 +2073,104 @@ int change_setup_default1 (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_I
 }
 #endif
 
+int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
+		  size_t *data_size, uint32_t *attributes) {
+  int ret = -1;
+  //static size_t npos = 0;
+  list_t *pos;
+  uint8_t *newbuf;
+  uint8_t state = 0;
+  char ret_name[NAME_MAX+1] = {0};
+	efi_guid_t ret_guid;
+  klvar_entry_t *var;
+  // DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  list_for_each(pos, &var_list) {
+    var = list_entry(pos, klvar_entry_t, list);
+    UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
+    // DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+    if (var->type == NORMAL_VAR_TYPE) {
+        memcpy(&ret_guid, &((DEFAULT_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+        *attributes = ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes;
+        state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    } else if (var->type == AUTH_VAR_TYPE) {
+        memcpy(&ret_guid, &((AUTHENTICATED_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+        *attributes = ((AUTHENTICATED_VARIABLE_HEADER *)var->header)->Attributes;
+        state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    }
+    if (state != 0x3F) {
+      // DBG_INFO ("[%s] state= 0x%x !\n", __func__, state);
+      continue;
+    }
+    // DBG_INFO ("[%s] *attributes= 0x%x !\n", __func__, *attributes);
+    // dump_buffer(&guid,sizeof(efi_guid_t));
+    // dump_buffer(&ret_guid,sizeof(efi_guid_t));
+    // DBG_INFO ("[%s] sizeof(efi_guid_t)= %ld !\n", __func__, sizeof(efi_guid_t));
+    if (memcmp(&ret_guid, &guid, sizeof(efi_guid_t)) != 0) {
+      continue;
+    }
+    // dump_buffer((void *)name,strlen(name));
+    // dump_buffer(ret_name,strlen(ret_name));
+    if (strcmp(name, ret_name) != 0) {
+      continue;
+    }
+    // DBG_INFO ("[%s] name= %s !\n", __func__, name);
+    if (!(newbuf = calloc(var->dataSize, sizeof (uint8_t)))) {
+      DBG_INFO("could not allocate memory");
+      *data = newbuf = NULL;
+      *data_size = 0;
+      return -1;
+    }
+    memcpy(newbuf, var->data, var->dataSize);
+    *data = newbuf;
+    *data_size = var->dataSize;
+    DBG_INFO ("[%s] find var name= %s !\n", __func__, name);
+    // dump_buffer(*data, *data_size);
+    ret = 1;
+    return ret;
+  }
+  DBG_INFO("[%s] no match !\n", __func__);
+  *data = newbuf = NULL;
+  *data_size = 0;
+  return -1;
+}
+
+int uefivar_get_next_variable_name(efi_guid_t **guid, char **name) {
+  size_t i = 0;
+  //int ret = -1;
+  static size_t npos = 0;
+  list_t *pos;
+  static char ret_name[NAME_MAX+1];
+	static efi_guid_t ret_guid;
+  klvar_entry_t *var;
+  if (npos >= list_size(&var_list))
+  {
+    npos = 0;
+    DBG_INFO ("[%s] npos= %zd !\n", __func__, npos);
+    goto end;
+  }
+  list_for_each(pos, &var_list) {
+    if (npos == i)
+    {
+      var = list_entry(pos, klvar_entry_t, list);
+      UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
+      if (var->type == NORMAL_VAR_TYPE)
+      {
+         memcpy(&ret_guid, &((DEFAULT_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+      } else if (var->type == AUTH_VAR_TYPE){
+         memcpy(&ret_guid, &((AUTHENTICATED_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+      }
+      DBG_INFO ("[%s] npos= %zd !\n", __func__, npos);
+      npos++;
+
+      DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+      *guid = &ret_guid;
+		  *name = ret_name;
+      //ret = 1;
+      break;
+    }
+    //DBG_INFO ("[%s] i= 0x%zd !\n", __func__, i);
+    i++;
+  }
+end:
+  return (int)npos;
+}

@@ -233,9 +233,9 @@ static void CONSTRUCTOR
 libefivar_init(void)
 {
 	struct efi_var_operations *ops_list[] = {
+    &klvars_ops,
 		&efivarfs_ops,
 		&vars_ops,
-    &klvars_ops,
 		&default_ops,
 		NULL
 	};
@@ -249,14 +249,22 @@ libefivar_init(void)
 
 	for (int i = 0; ops_list[i] != NULL; i++)
 	{
+    printf("\t[libefivar_init()], ops_list[i]->name:%s\n", ops_list[i]->name);
 		if (ops_name != NULL) {
 			if (!strcmp(ops_list[i]->name, ops_name) ||
 					!strcmp(ops_list[i]->name, "default")) {
 				ops = ops_list[i];
+        if (!strcmp(klvars_ops.name, ops_name)) {
+          int ri = ops_list[i]->probe();
+          if (ri <= 0) {
+            efi_error("ops_list[%d]->probe() failed", i);
+          }
+        }
 				break;
 			}
 		} else {
 			int rc = ops_list[i]->probe();
+      printf("\trc=%d i=%d \n", rc, i);
 			if (rc <= 0) {
 				efi_error("ops_list[%d]->probe() failed", i);
 			} else {
