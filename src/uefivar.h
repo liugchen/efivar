@@ -455,6 +455,10 @@ int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
 		  size_t *data_size, uint32_t *attributes);
 int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		  size_t data_size, uint32_t attributes, mode_t mode, uint8_t *nv_fv_buff, uint32_t buff_len); 
+int uefivar_del_variable(efi_guid_t guid, const char *name, uint8_t *buffer, int len, uint8_t *nv_fv_buff, uint32_t buff_len);
+void clear_list(void); 
+int is_have_name(const char *name);
+int new_bootnext(uint8_t *nv_fv_buff, uint32_t buff_len);
 #endif
 
 

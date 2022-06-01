@@ -37,7 +37,7 @@
 #define KLVARS_TOOL_NAME "klvars"
 #define BIOS_BACKUP_PATH "./rom.bin"
 #define VARS_LAYOUT_NAME "NVRAM"
-#define BIOS_GENERATE_PATH            "./generate.bin"
+#define BIOS_GENERATE_PATH            "./rom.bin"
 
 static	LIST_HEAD(klvars_list);
 
@@ -77,7 +77,7 @@ typedef struct _KLUTIL_CONTEXT {
 } KLUTIL_CONTEXT;
 
 KLUTIL_CONTEXT  klutil_ctx;
-
+#if 0
 static const char default_klvars_path[] = "/sys/firmware/efi/vars/";
 
 static const char *
@@ -92,7 +92,7 @@ get_klvars_path(void)
 		path = default_klvars_path;
 	return path;
 }
-
+#endif
 
 typedef struct efi_kernel_variable_32_t {
 	uint16_t	VariableName[1024/sizeof(uint16_t)];
@@ -221,7 +221,7 @@ err:
 	errno = saved_errno;
 	return sixtyfour_bit;
 }
-#endif
+
 static int
 get_size_from_file(const char *filename, size_t *retsize)
 {
@@ -262,7 +262,7 @@ err:
 	errno = errno_value;
 	return ret;
 }
-
+#endif
 static struct romentry *mutable_layout_next(
 		const struct flashrom_layout *const layout, struct romentry *iterator)
 {
@@ -594,32 +594,21 @@ err:
 static int
 klvars_get_variable_size(efi_guid_t guid, const char *name, size_t *size)
 {
-	int errno_value;
 	int ret = -1;
 
-	char *path = NULL;
-	int rc = asprintf(&path, "%s%s-"GUID_FORMAT"/size", get_klvars_path(),
-			  name, GUID_FORMAT_ARGS(&guid));
-	if (rc < 0) {
-		efi_error("asprintf failed");
-		goto err;
+	uint8_t *data;
+	size_t data_size;
+	uint32_t attribs;
+
+	ret = uefivar_get_variable(guid, name, &data, &data_size, &attribs);
+	if (ret < 0) {
+		efi_error("efi_get_variable() failed");
+		return ret;
 	}
 
-	size_t retsize = 0;
-	rc = get_size_from_file(path, &retsize);
-	if (rc >= 0) {
-		ret = 0;
-		*size = retsize;
-	} else if (rc < 0) {
-		efi_error("get_size_from_file(%s) failed", path);
-	}
-err:
-	errno_value = errno;
-
-	if (path)
-		free(path);
-
-	errno = errno_value;
+	*size = data_size  + sizeof(attribs);
+	if (data)
+		free(data);
 	return ret;
 }
 
@@ -655,133 +644,54 @@ klvars_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
 	return ret;
 }
 
+static int store_bios_to_file (uint8_t *buffer, int len);
 static int
 klvars_del_variable(efi_guid_t guid, const char *name)
 {
-	int errno_value;
 	int ret = -1;
-	char *path = NULL;
-	int rc;
-	int fd = -1;
-	uint8_t *buf = NULL;
-	size_t buf_size = 0;
-	char *delvar;
-
-	rc = asprintf(&path, "%s%s-" GUID_FORMAT "/raw_var", get_klvars_path(),
-		      name, GUID_FORMAT_ARGS(&guid));
-	if (rc < 0) {
-		efi_error("asprintf failed");
-		goto err;
+	uint8_t *buf;
+  if (strlen(name) > 1024) {
+		efi_error("variable name size is too large (%zd of 1024)",
+			  strlen(name));
+		errno = EINVAL;
+		return -1;
 	}
+  if (!(buf = calloc(sizeof(uint8_t), klutil_ctx.nvram_size))) {
+    DBG_ERR("could not allocate memory");
+    return -1;
+  }
+  memset(buf, 0xFF, klutil_ctx.nvram_size);
+	ret = uefivar_del_variable(guid, name, buf, klutil_ctx.nvram_size, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
 
-	fd = open(path, O_RDONLY);
-	if (fd < 0) {
-		efi_error("open(%s, O_RDONLY) failed", path);
-		goto err;
-	}
-
-	rc = read_file(fd, &buf, &buf_size);
-	buf_size -= 1; /* read_file pads out 1 extra byte to NUL it */
-	if (rc < 0) {
-		efi_error("read_file(%s) failed", path);
-		goto err;
-	}
-
-	if (buf_size != sizeof(efi_kernel_variable_64_t) &&
-		       buf_size != sizeof(efi_kernel_variable_32_t)) {
-		efi_error("variable size %zd is not 32-bit (%zd) or 64-bit (%zd)",
-			  buf_size, sizeof(efi_kernel_variable_32_t),
-			  sizeof(efi_kernel_variable_64_t));
-
-		errno = EFBIG;
-		goto err;
-	}
-
-	if (asprintfa(&delvar, "%s%s", get_klvars_path(), "del_var") < 0) {
-		efi_error("asprintfa() failed");
-		goto err;
-	}
-
-	close(fd);
-	fd = open(delvar, O_WRONLY);
-	if (fd < 0) {
-		efi_error("open(%s, O_WRONLY) failed", delvar);
-		goto err;
-	}
-
-	rc = write(fd, buf, buf_size);
-	if (rc >= 0)
-		ret = 0;
-	else
-		efi_error("write() failed");
-err:
-	errno_value = errno;
-
-	if (buf)
-		free(buf);
-
-	if (fd >= 0)
-		close(fd);
-
-	if (path)
-		free(path);
-
-	errno = errno_value;
-	return ret;
-}
-
-static int
-_klvars_chmod_variable(char *path, mode_t mode)
-{
-	mode_t mask = umask(umask(0));
-	char *files[] = {
-		"", "attributes", "data", "guid", "raw_var", "size", NULL
-		};
-
-	int saved_errno = 0;
-	int ret = 0;
-	for (int i = 0; files[i] != NULL; i++) {
-		char *new_path = NULL;
-		int rc = asprintf(&new_path, "%s/%s", path, files[i]);
-		if (rc > 0) {
-			rc = chmod(new_path, mode & ~mask);
-			if (rc < 0) {
-				if (saved_errno == 0)
-					saved_errno = errno;
-				ret = -1;
-			}
-			free(new_path);
-		} else if (rc < 0) {
-			if (saved_errno == 0)
-				saved_errno = errno;
-			ret = -1;
-		}
-	}
-	errno = saved_errno;
+  DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
+  memcpy( (uint8_t *)klutil_ctx.backup_data + layout->head->start, buf, klutil_ctx.nvram_size);
+  if (buf) {
+    free(buf);
+  }
+  
+  if(store_bios_to_file ((uint8_t *)klutil_ctx.backup_data, klutil_ctx.bkfile_size)) {
+    DBG_ERR ("Generate update file fail.\n");
+    return -1;
+  } else {
+    DBG_PROG ("Generate update file success.\n");
+  }
+  cleanup_context ();
+  clear_list();
+  klvars_probe();
 	return ret;
 }
 
 static int
 klvars_chmod_variable(efi_guid_t guid, const char *name, mode_t mode)
 {
-	if (strlen(name) > 1024) {
-		errno = EINVAL;
-		return -1;
-	}
-
-	char *path;
-	int rc = asprintf(&path, "%s%s-" GUID_FORMAT, get_klvars_path(),
-			  name, GUID_FORMAT_ARGS(&guid));
-	if (rc < 0) {
-		efi_error("asprintf failed");
-		return -1;
-	}
-
-	rc = _klvars_chmod_variable(path, mode);
-	int saved_errno = errno;
-	efi_error("_klvars_chmod_variable() failed");
-	free(path);
-	errno = saved_errno;
+	int rc = 1;
+  efi_guid_t ret_guid = EFI_GLOBAL_GUID;
+  if (memcmp(&ret_guid, &guid, sizeof(efi_guid_t)) != 0) {
+      
+  }
+  
+  name = name;
+  mode =mode;
 	return rc;
 }
 
@@ -855,6 +765,31 @@ klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		errno = ENOSPC;
 		return -1;
 	}
+  DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  if (strcmp(name, "BootNext") == 0) {
+    if(!is_have_name(name)) {
+      DBG_ERR("[%s] new_bootnext \n", __func__);
+      ret = new_bootnext((uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
+      if (ret < 0)
+      {
+        DBG_ERR("[%s] new_bootnext failed \n", __func__);
+        return ret;
+      } else {
+        DBG_ERR("[%s] renew all \n", __func__);
+        DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
+        memcpy( (uint8_t *)klutil_ctx.backup_data + layout->head->start, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
+        if(store_bios_to_file ((uint8_t *)klutil_ctx.backup_data, klutil_ctx.bkfile_size)) {
+          DBG_ERR ("Generate renew file fail.\n");
+          return -1;
+        } else {
+          DBG_PROG ("Generate renew file success.\n");
+        }
+        cleanup_context ();
+        clear_list();
+        klvars_probe();
+      }
+    }
+  }
   //DBG_INFO ("[%s] name= %s data_size=%zd attributes=0x%x mode=0x%x!\n", __func__, name, data_size, attributes, (int)mode);
   dump_buffer(data, data_size);
   ret = uefivar_get_variable(guid, name, &old_data,
@@ -872,6 +807,9 @@ klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
   } else {
     DBG_PROG ("Generate update file success.\n");
   }
+  cleanup_context ();
+  clear_list();
+  klvars_probe();
 	return ret;
 }
 

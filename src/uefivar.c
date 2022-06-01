@@ -32,6 +32,7 @@ Revision History:
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <stddef.h>
+#include <ctype.h>
 #include "uefivar.h"
 #include "list.h"
 #include "guid.h"
@@ -2072,6 +2073,93 @@ int change_setup_default1 (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_I
   return ret;  
 }
 #endif
+
+int is_have_name(const char *name) {
+  int ret = 0;
+  list_t *pos;
+  uint8_t state = 0;
+  char ret_name[NAME_MAX+1] = {0};
+  klvar_entry_t *var;
+  
+  DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  list_for_each(pos, &var_list) {
+    var = list_entry(pos, klvar_entry_t, list);
+    UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
+    if (var->type == NORMAL_VAR_TYPE) {
+        state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    } else if (var->type == AUTH_VAR_TYPE) {
+        state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    }
+    if (state != 0x3F) {
+      DBG_INFO ("[%s] state= 0x%x !\n", __func__, state);
+      continue;
+    }
+    if (strcmp(name, ret_name) == 0) {
+      ret = 1;
+      break;
+    }
+    
+  }
+  return ret;
+}
+
+int new_bootnext(uint8_t *nv_fv_buff, uint32_t buff_len) {
+  klvar_entry_t *var;
+  uint32_t  offset;
+  uint16_t  data = 0;
+  char name[] = {0x42, 0x00, 0x6F, 0x00, 0x6F, 0x00, 0x74, 0x00, 0x4E, 0x00, 0x65, 0x00, 0x78, 0x00, 0x74, 0x00, 0x00, 0x00};//L"BootNext"
+  uint32_t  type = (uint32_t)GetAuthenticatedFlag((void *) nv_fv_buff);
+  var = list_last_entry(&var_list, klvar_entry_t, list);
+  offset = var->offset + var->totalSize;
+
+  if(type == NORMAL_VAR_TYPE) {
+    DEFAULT_VARIABLE_HEADER header = {
+      .StartId = 0x55AA,
+      .State = 0x3F,
+      .Reserved = 0,
+      .Attributes = 0x07,
+      .NameSize = sizeof(name),
+      .DataSize = sizeof(data),
+      .VendorGuid = {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}},
+    };
+    if (offset + sizeof(DEFAULT_VARIABLE_HEADER) + header.NameSize + header.DataSize > gStoreHeader.Size + gVolumeHeader.HeaderLength)
+    {
+      DBG_ERR ("[%s] DEFAULT_VARIABLE offset=0x%x over !\n", __func__, offset);
+      return -1;
+    }
+        if (offset + sizeof(DEFAULT_VARIABLE_HEADER) + header.NameSize + header.DataSize > buff_len)
+    {
+      DBG_ERR ("[%s] DEFAULT_VARIABLE offset=0x%x over !\n", __func__, offset);
+      return -1;
+    }
+    memcpy(nv_fv_buff + offset, &header, sizeof(DEFAULT_VARIABLE_HEADER));
+    memcpy(nv_fv_buff + offset + sizeof(DEFAULT_VARIABLE_HEADER), name, header.NameSize);
+    memcpy(nv_fv_buff + offset + sizeof(DEFAULT_VARIABLE_HEADER) + header.NameSize, name, header.DataSize);
+  } else if ( type == AUTH_VAR_TYPE ) {
+    AUTHENTICATED_VARIABLE_HEADER header = {
+      .StartId = 0x55AA,
+      .State = 0x3F,
+      .Reserved = 0,
+      .Attributes = 0x07,
+      .MonotonicCount = 0,
+      .TimeStamp ={0},
+      .PubKeyIndex = 0,
+      .NameSize = sizeof(name),
+      .DataSize = sizeof(data),
+      .VendorGuid = {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}},
+    };
+    if (offset + sizeof(AUTHENTICATED_VARIABLE_HEADER) + header.NameSize + header.DataSize > gStoreHeader.Size + gVolumeHeader.HeaderLength)
+    {
+      DBG_ERR ("[%s] DEFAULT_VARIABLE offset=0x%x over !\n", __func__, offset);
+      return -1;
+    }
+    memcpy(nv_fv_buff + offset, &header, sizeof(AUTHENTICATED_VARIABLE_HEADER));
+    memcpy(nv_fv_buff + offset + sizeof(AUTHENTICATED_VARIABLE_HEADER), name, header.NameSize);
+    memcpy(nv_fv_buff + offset + sizeof(AUTHENTICATED_VARIABLE_HEADER) + header.NameSize, name, header.DataSize);
+  }
+  return 0;
+}
+
 int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		 size_t data_size, uint32_t attributes, mode_t mode, uint8_t *nv_fv_buff, uint32_t buff_len) {
   int ret = -1;
@@ -2085,7 +2173,6 @@ int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
   char *databk;
   mode = mode;
 
-  // DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
   list_for_each(pos, &var_list) {
     var = list_entry(pos, klvar_entry_t, list);
     UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
@@ -2181,6 +2268,86 @@ int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
   DBG_INFO("[%s] no match !\n", __func__);
 
   return -1;
+}
+
+static int is_bootx(const char *name, int *order) {
+  char boot[] = "Boot";
+	size_t plen = strlen(boot);
+	const char *num = name + plen;
+	if (!strncmp(name, boot, plen) &&
+      isxdigit(num[0]) && isxdigit(num[1]) &&
+      isxdigit(num[2]) && isxdigit(num[3]) ) {
+      *order = atoi(num);
+      DBG_INFO ("[%s] order= %d !\n", __func__, *order);
+    return 1;
+  }
+		return 0;  
+}
+
+int uefivar_del_variable(efi_guid_t guid, const char *name, uint8_t *buffer, int len, uint8_t *nv_fv_buff, uint32_t buff_len) {
+  int ret = -1;
+  list_t *pos;
+  // uint8_t state = 0;
+  char ret_name[NAME_MAX+1] = {0};
+	efi_guid_t ret_guid;
+  klvar_entry_t *var;
+  // uint32_t attr;
+  int buflen = len - len;
+  int order;
+  DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  buflen = gVolumeHeader.HeaderLength + sizeof(VARIABLE_STORE_HEADER);
+  memcpy(buffer , nv_fv_buff, buflen);
+  list_for_each(pos, &var_list) {
+    var = list_entry(pos, klvar_entry_t, list);
+    UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
+    DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+    if (var->type == NORMAL_VAR_TYPE) {
+        memcpy(&ret_guid, &((DEFAULT_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+        // attr = ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes;
+        // state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    } else if (var->type == AUTH_VAR_TYPE) {
+        memcpy(&ret_guid, &((AUTHENTICATED_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
+        // attr = ((AUTHENTICATED_VARIABLE_HEADER *)var->header)->Attributes;
+        // state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
+    }
+    // DBG_INFO ("[%s] *attributes= 0x%x !\n", __func__, *attributes);
+    // dump_buffer(&guid,sizeof(efi_guid_t));
+    // dump_buffer(&ret_guid,sizeof(efi_guid_t));
+    // DBG_INFO ("[%s] sizeof(efi_guid_t)= %ld !\n", __func__, sizeof(efi_guid_t));
+    if ((memcmp(&ret_guid, &guid, sizeof(efi_guid_t)) == 0) && (strcmp(name, ret_name) == 0)) {
+      DBG_INFO ("[%s] name continue = %s ret_name= %s !\n", __func__, name, ret_name);
+      continue;
+    }
+
+    //change data
+    if ((strcmp(ret_name, "BootOrder") == 0) && is_bootx(name, &order))
+    {
+      memcpy(buffer + buflen, nv_fv_buff + var->offset, var->totalSize - var->dataSize);
+      buflen += var->totalSize - var->dataSize;
+      int j = 0;
+      for (size_t i = 0; i < var->dataSize/2; i++)
+      {
+        if (((uint16_t *)var->data)[i] != (uint16_t)order) {
+          memcpy(buffer + buflen + sizeof(uint16_t) * j, var->data + sizeof(uint16_t) * i, sizeof(uint16_t));
+          j++;
+        }
+      }
+      buflen += var->dataSize;
+    } else {
+      memcpy(buffer + buflen, nv_fv_buff + var->offset, var->totalSize);
+      buflen += var->totalSize;
+    }
+    if ((uint32_t)buflen > buff_len)
+    {
+      DBG_INFO("[%s] ERR: buflen > buff_len  !\n", __func__);
+      ret = -1;
+      return ret;
+    }
+    
+  }
+  DBG_INFO("[%s] finish !\n", __func__);
+  ret = 1;
+  return ret;
 }
 
 int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
@@ -2283,4 +2450,9 @@ int uefivar_get_next_variable_name(efi_guid_t **guid, char **name) {
   }
 end:
   return (int)npos;
+}
+
+void clear_list(void) {
+  INIT_LIST_HEAD(&var_list);
+  DBG_INFO ("[%s] list size =%zd !\n", __func__, list_size(&var_list));
 }
