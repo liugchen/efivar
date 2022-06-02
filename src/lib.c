@@ -249,7 +249,7 @@ libefivar_init(void)
 
 	for (int i = 0; ops_list[i] != NULL; i++)
 	{
-    printf("\t[libefivar_init()], ops_list[i]->name:%s\n", ops_list[i]->name);
+    // printf("\t[libefivar_init()], ops_list[i]->name:%s\n", ops_list[i]->name);
 		if (ops_name != NULL) {
 			if (!strcmp(ops_list[i]->name, ops_name) ||
 					!strcmp(ops_list[i]->name, "default")) {
@@ -264,7 +264,7 @@ libefivar_init(void)
 			}
 		} else {
 			int rc = ops_list[i]->probe();
-      printf("\trc=%d i=%d \n", rc, i);
+      //printf("\trc=%d i=%d \n", rc, i);
 			if (rc <= 0) {
 				efi_error("ops_list[%d]->probe() failed", i);
 			} else {

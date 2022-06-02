@@ -25,15 +25,10 @@
 #define DEBUG 1
 #define msg_gerr printf //efi_error
 #define DBG_ERR printf //efi_error
-#if DEBUG
 #define msg_gdbg printf //efi_error
 #define DBG_INFO printf //efi_error
 #define DBG_PROG printf //efi_error
-#else
-#define msg_gdbg
-#define DBG_INFO
-#define DBG_PROG
-#endif
+
 #define KLVARS_TOOL_NAME "klvars"
 #define BIOS_BACKUP_PATH "./rom.bin"
 #define VARS_LAYOUT_NAME "NVRAM"
@@ -77,22 +72,6 @@ typedef struct _KLUTIL_CONTEXT {
 } KLUTIL_CONTEXT;
 
 KLUTIL_CONTEXT  klutil_ctx;
-#if 0
-static const char default_klvars_path[] = "/sys/firmware/efi/vars/";
-
-static const char *
-get_klvars_path(void)
-{
-	static const char *path;
-	if (path)
-		return path;
-
-	path = getenv("klvars_PATH");
-	if (!path)
-		path = default_klvars_path;
-	return path;
-}
-#endif
 
 typedef struct efi_kernel_variable_32_t {
 	uint16_t	VariableName[1024/sizeof(uint16_t)];
@@ -111,158 +90,7 @@ typedef struct efi_kernel_variable_64_t {
 	uint64_t	Status;
 	uint32_t	Attributes;
 } PACKED efi_kernel_variable_64_t;
-#if 0
-static ssize_t
-get_file_data_size(int dfd, char *name)
-{
-	char raw_var[NAME_MAX + 9];
 
-	memset(raw_var, '\0', sizeof (raw_var));
-	strncpy(raw_var, name, NAME_MAX);
-	strcat(raw_var, "/raw_var");
-
-	int fd = openat(dfd, raw_var, O_RDONLY);
-	if (fd < 0) {
-		efi_error("openat failed");
-		return -1;
-	}
-
-	char buf[4096];
-	ssize_t sz, total = 0;
-	int tries = 5;
-	while (1) {
-		sz = read(fd, buf, 4096);
-		if (sz < 0 && (errno == EAGAIN || errno == EINTR)) {
-			if (tries--)
-				continue;
-			total = -1;
-			break;
-		}
-
-		if (sz < 0) {
-			int saved_errno = errno;
-			close(fd);
-			errno = saved_errno;
-			return -1;
-		}
-
-		if (sz == 0)
-			break;
-		total += sz;
-	}
-	close(fd);
-	return total;
-}
-
-/*
- * Determine which ABI the kernel has given us.
- *
- * We have two situations - before and after kernel's commit e33655a38.
- * Before hand, the situation is like:
- * 64-on-64 - 64-bit DataSize and status
- * 32-on-32 - 32-bit DataSize and status
- * 32-on-64 - 64-bit DataSize and status
- *
- * After it's like this if CONFIG_COMPAT is enabled:
- * 64-on-64 - 64-bit DataSize and status
- * 32-on-64 - 32-bit DataSize and status
- * 32-on-32 - 32-bit DataSize and status
- *
- * Is there a better way to figure this out?
- * Submit your patch here today!
- */
-static int
-is_64bit(void)
-{
-	static int sixtyfour_bit = -1;
-	DIR *dir = NULL;
-	int dfd = -1;
-	int saved_errno;
-
-	if (sixtyfour_bit != -1)
-		return sixtyfour_bit;
-
-	dir = opendir(get_klvars_path());
-	if (!dir)
-		goto err;
-
-	dfd = dirfd(dir);
-	if (dfd < 0)
-		goto err;
-
-	while (1) {
-		struct dirent *entry = readdir(dir);
-		if (entry == NULL)
-			break;
-
-		if (!strcmp(entry->d_name, "..") || !strcmp(entry->d_name, "."))
-			continue;
-
-		ssize_t size = get_file_data_size(dfd, entry->d_name);
-		if (size < 0) {
-			continue;
-		} else if (size == 2084) {
-			sixtyfour_bit = 1;
-		} else {
-			sixtyfour_bit = 0;
-		}
-
-		errno = 0;
-		break;
-	}
-	if (sixtyfour_bit == -1)
-		sixtyfour_bit = __SIZEOF_POINTER__ == 4 ? 0 : 1;
-err:
-	saved_errno = errno;
-
-	if (dir)
-		closedir(dir);
-
-	errno = saved_errno;
-	return sixtyfour_bit;
-}
-
-static int
-get_size_from_file(const char *filename, size_t *retsize)
-{
-	uint8_t *buf = NULL;
-	size_t bufsize = -1;
-	int errno_value;
-	int ret = -1;
-	int fd = open(filename, O_RDONLY);
-	if (fd < 0) {
-		efi_error("open(%s, O_RDONLY) failed", filename);
-		goto err;
-	}
-
-	int rc = read_file(fd, &buf, &bufsize);
-	if (rc < 0) {
-		efi_error("read_file(%s) failed", filename);
-		goto err;
-	}
-
-	long long size = strtoll((char *)buf, NULL, 0);
-	if ((size == LLONG_MIN || size == LLONG_MAX) && errno == ERANGE) {
-		*retsize = -1;
-	} else if (size < 0) {
-		*retsize = -1;
-	} else {
-		*retsize = (size_t)size;
-		ret = 0;
-	}
-err:
-	errno_value = errno;
-
-	if (fd >= 0)
-		close(fd);
-
-	if (buf != NULL)
-		free(buf);
-
-	errno = errno_value;
-	return ret;
-}
-#endif
 static struct romentry *mutable_layout_next(
 		const struct flashrom_layout *const layout, struct romentry *iterator)
 {
@@ -483,13 +311,13 @@ static int read_flash_bios_and_backup ()
   int      sec_size = 0;
 
   //memset (buffer, 0, flash_size);
-  DBG_PROG("[%s] Reading spi flash...\n", KLVARS_TOOL_NAME);
+  // DBG_PROG("[%s] Reading spi flash...\n", KLVARS_TOOL_NAME);
 
   if (!klutil_ctx.backup_file) {
       DBG_ERR ("ERR: klutil_ctx.backup_file null!\n");
       return 1;
   }
-  DBG_INFO ("Update file: %s\n", klutil_ctx.backup_file);
+  // DBG_INFO ("Update file: %s\n", klutil_ctx.backup_file);
 
   fp = fopen (klutil_ctx.backup_file, "rb");
   if (!fp) {
@@ -516,7 +344,7 @@ static int read_flash_bios_and_backup ()
   }
   memset (buffer, 0xFF, buff_size);
 
-  DBG_INFO ("file_size: %x\n", file_size);
+  // DBG_INFO ("file_size: %x\n", file_size);
 
   fseek (fp, 0, SEEK_SET);
   bytes = fread (buffer, 1, file_size, fp);
@@ -526,9 +354,9 @@ static int read_flash_bios_and_backup ()
     //klutil_ctx.bkfile_size = file_size;
     klutil_ctx.bkfile_size = buff_size;
     klutil_ctx.backup_data  = buffer;
-    DBG_INFO ("Read bios image file OK! image_size = 0x%x\n",klutil_ctx.bkfile_size);
+    // DBG_INFO ("Read bios image file OK! image_size = 0x%x\n",klutil_ctx.bkfile_size);
   } else {
-    DBG_INFO ("Failed to read bios image file.\n");
+    // DBG_INFO ("Failed to read bios image file.\n");
   }
   fclose (fp);  
 
@@ -572,14 +400,14 @@ klvars_probe(void)
     goto err;
   }
   DBG_PROG ("[%s] NVRAM start=0x%x len=0x%x.\n", KLVARS_TOOL_NAME, start, len);
-  dump_buffer(klutil_ctx.backup_data, 0x100);
+  // dump_buffer(klutil_ctx.backup_data, 0x100);
   ret = get_nvram_data_from_flash(start, &klutil_ctx.nvram_data, len, &klutil_ctx.nvram_size);
   if (ret != 0) {
     DBG_ERR ("[%s] get_nvram_data_from_flash FAIILED.\n", KLVARS_TOOL_NAME);
     goto err;
   }
-  DBG_PROG ("[%s] klutil_ctx.nvram_size =0x%x.\n", KLVARS_TOOL_NAME, klutil_ctx.nvram_size);
-  dump_buffer(klutil_ctx.nvram_data, 0x100);
+  // DBG_PROG ("[%s] klutil_ctx.nvram_size =0x%x.\n", KLVARS_TOOL_NAME, klutil_ctx.nvram_size);
+  // dump_buffer(klutil_ctx.nvram_data, 0x100);
   ret = GetAuthenticatedFlag((void*)klutil_ctx.nvram_data);
   ret = parse_nv_frame ((uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
   if (ret != 0) {
@@ -663,7 +491,7 @@ klvars_del_variable(efi_guid_t guid, const char *name)
   memset(buf, 0xFF, klutil_ctx.nvram_size);
 	ret = uefivar_del_variable(guid, name, buf, klutil_ctx.nvram_size, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
 
-  DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
+  // DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
   memcpy( (uint8_t *)klutil_ctx.backup_data + layout->head->start, buf, klutil_ctx.nvram_size);
   if (buf) {
     free(buf);
@@ -727,7 +555,7 @@ static int store_bios_to_file (uint8_t *buffer, int len)
     klutil_ctx.generate_file[strlen(src_str)] = 0;
 #endif
   }
-  DBG_INFO ("Generate file: %s\n", klutil_ctx.generate_file);
+  // DBG_INFO ("Generate file: %s\n", klutil_ctx.generate_file);
   
   fp = fopen (klutil_ctx.generate_file, "wb");
   if (!fp) {
@@ -765,7 +593,7 @@ klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
 		errno = ENOSPC;
 		return -1;
 	}
-  DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  // DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
   if (strcmp(name, "BootNext") == 0) {
     if(!is_have_name(name)) {
       DBG_ERR("[%s] new_bootnext \n", __func__);
@@ -776,7 +604,7 @@ klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
         return ret;
       } else {
         DBG_ERR("[%s] renew all \n", __func__);
-        DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
+        // DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
         memcpy( (uint8_t *)klutil_ctx.backup_data + layout->head->start, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
         if(store_bios_to_file ((uint8_t *)klutil_ctx.backup_data, klutil_ctx.bkfile_size)) {
           DBG_ERR ("Generate renew file fail.\n");
@@ -790,16 +618,16 @@ klvars_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
       }
     }
   }
-  //DBG_INFO ("[%s] name= %s data_size=%zd attributes=0x%x mode=0x%x!\n", __func__, name, data_size, attributes, (int)mode);
-  dump_buffer(data, data_size);
+  //// DBG_INFO ("[%s] name= %s data_size=%zd attributes=0x%x mode=0x%x!\n", __func__, name, data_size, attributes, (int)mode);
+  // dump_buffer(data, data_size);
   ret = uefivar_get_variable(guid, name, &old_data,
 		      &old_data_size, &old_attributes);
-  dump_buffer(old_data, old_data_size);
-  DBG_INFO ("[%s] data_size=%zd attributes=0x%x !\n", __func__, old_data_size, old_attributes);
+  // dump_buffer(old_data, old_data_size);
+  // DBG_INFO ("[%s] data_size=%zd attributes=0x%x !\n", __func__, old_data_size, old_attributes);
 	ret = uefivar_set_variable(guid, name, data,
 		 data_size, attributes, mode, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
 
-  DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
+  // DBG_INFO ("[%s] layout->head.start=0x%x !\n", __func__, layout->head->start);
   memcpy( (uint8_t *)klutil_ctx.backup_data + layout->head->start, (uint8_t *)klutil_ctx.nvram_data, klutil_ctx.nvram_size);
   if(store_bios_to_file ((uint8_t *)klutil_ctx.backup_data, klutil_ctx.bkfile_size)) {
     DBG_ERR ("Generate update file fail.\n");

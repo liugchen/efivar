@@ -37,21 +37,17 @@ Revision History:
 #include "list.h"
 #include "guid.h"
 
-#define DEBUG 1
+#define DEBUG 0
 #define msg_gerr printf //efi_error
 #define DBG_ERR printf //efi_error
-#if DEBUG
+
 #define msg_gdbg printf //efi_error
 #define DBG_INFO printf //efi_error
 #define DBG_PROG printf //efi_error
-#else
-#define msg_gdbg
-#define DBG_INFO
-#define DBG_PROG
-#endif
 
 #define BIT0 0x00000001
 #define BYTES_PER_LINE           16
+
 void dump_buffer (void *buffer, int len)
 {
   int   index;
@@ -736,8 +732,6 @@ UnicodeStrToAsciiStr (
 {
   CHAR8                               *ReturnValue;
 
-  // dump_buffer ((uint8_t *)Source, 0x10);
-
   ReturnValue = Destination;
   while (*Source != '\0') {
     *(Destination++) = (CHAR8) *(Source++);
@@ -760,9 +754,7 @@ int locate_first_var (uint8_t *nv_fv_buff, uint32_t buff_len, int *offset)
 
   blk_map_entry = ((EFI_FIRMWARE_VOLUME_HEADER *)nv_fv_buff)->FvBlockMap;
   do {
-    //DBG_INFO ("NumBlocks: %x, BlockLength: %x\n", blk_map_entry->NumBlocks, blk_map_entry->BlockLength);
-
-    if (blk_map_entry->NumBlocks == 0x00 &&
+      if (blk_map_entry->NumBlocks == 0x00 &&
         blk_map_entry->BlockLength == 0x00)
       break;
     blk_map_entry++;
@@ -786,74 +778,6 @@ static int chk_nvfv (uint8_t *nv_fv_buff, uint32_t buff_len)
   }
   return 0;
 }
-#if 0
-// parse the data of raw variable data, i.e. data from the VARIABLE area of the BIOS.
-// pick out data of variables named "UserInfoLog" and "SecurityInfoLog" and store 
-// them into a temp file.
-int get_klsetup_var (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *var_info)
-{
-  int                             ret;
-  uint                            var_size;
-  int                             offset;
-  uint8_t                       * ptr;
-  wchar_t                       * var_name;
-  UINT32                          namesize;
-    
-  //SETUP_DATA      *var_setup = NULL;
-
-  if (!nv_fv_buff || !var_info) {
-    return 1;
-  }
-
-  if (chk_nvfv (nv_fv_buff, buff_len) != 0) {
-    DBG_ERR ("Inalid NV_FV!\n");
-    return 1;
-  }
-
-  ret       = -1;
-  ptr       = NULL;
-  var_name  = NULL;
-  offset    = 0;
-
-  //DBG_PROG ("[%s] Parsing the uefi non-volatile variable...\n", BOOTMGR_TOOL_NAME);
-  DBG_INFO ("Parsing the uefi non-volatile variable...\n");
-  ptr = nv_fv_buff;
-  
-  locate_first_var (nv_fv_buff, buff_len, &offset);
-  if (offset > 0) {
-    ptr += offset;
-  }
-
-  while ((uint32_t)(ptr - nv_fv_buff) < buff_len) {
-    if (ptr[0] == 0xAA && ptr[1] == 0x55) {
-		GetVariabeInf(ptr , &var_size , (uint8_t**)&var_name , &namesize , NULL);     
-#if defined(__aarch64__) || defined(__mips__) || defined(__loongarch__)
-      var_size = _INTSIZEOF(var_size);
-#endif
-      if (ptr[2] == VAR_ADDED) { 
-	  	GetVariabeInf(ptr , NULL , (uint8_t**)&var_name , &namesize , NULL);
-        //wprintf (L"Var Name: %s\n", var_name);
-        if (wstrncmp (var_name, klsetup_var_name, namesize) == 0) {
-          DBG_INFO ("KlSetup variable found.\n");
-          //var_setup = (SETUP_DATA *)((uint8_t *)var_hdr + sizeof(VARIABLE_HEADER(var_type)) + var_hdr->NameSize);
-          ret = 0;
-          var_info->IsValid = 1;
-          var_info->Offset  = (uint32_t)(ptr - nv_fv_buff);
-          DBG_INFO ("Var Offset: %#x\n", var_info->Offset);
-          //break;
-        }
-      }
-      ptr = ((uint8_t *)ptr + var_size);
-
-    } else {
-      //ptr += 1;
-      break;
-    }
-  }
-
-  return ret;
-}
-#endif
 
 nvType getNvType(uint8_t *buffer, EFI_GUID guid) {
 
@@ -877,7 +801,9 @@ int getVarHeaderInfo( uint8_t *nv_fv_buff, uint32_t buff_len) {
   }
   // EFI_FIRMWARE_VOLUME_HEADER *volumeHeader = (EFI_FIRMWARE_VOLUME_HEADER *)buffer;
   memcpy(&gVolumeHeader, nv_fv_buff, sizeof(EFI_FIRMWARE_VOLUME_HEADER));
+  #if DEBUG 
   dump_buffer(&gVolumeHeader, sizeof(gVolumeHeader));
+  #endif
   return 0;
 }
 
@@ -893,7 +819,9 @@ int getVarStoreHeaderInfo( uint8_t *nv_fv_buff, uint32_t buff_len) {
     return 2;
   }
   memcpy(&gStoreHeader, nv_fv_buff + gVolumeHeader.HeaderLength, sizeof(VARIABLE_STORE_HEADER));
+  #if DEBUG 
   dump_buffer(&gStoreHeader, sizeof(gStoreHeader));
+  #endif
   
   return 0;
 }
@@ -928,7 +856,9 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len, list_t *head) {
     return 3;
   }
   varType = GetAuthenticatedFlag((void *) nv_fv_buff);
-  DBG_INFO ("[%s] varType=%d !\n", __func__, varType);
+  #if DEBUG 
+  DBG_INFO ("[%s] varType=%d !\n", __func__, varType); 
+  #endif
   if (varType == NORMAL_VAR_TYPE) {
     hdrsize = sizeof(DEFAULT_VARIABLE_HEADER);
   } else if ( varType == AUTH_VAR_TYPE ) {
@@ -937,8 +867,10 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len, list_t *head) {
     DBG_ERR ("[%s] varType=%d ERR!\n", __func__, varType);
     return 4;
   }
-  DBG_INFO ("[%s]AUTHENTICATED offset=0x%x !\n", __func__, offset);
+  #if DEBUG 
+  DBG_INFO ("[%s]AUTHENTICATED offset=0x%x !\n", __func__, offset); 
   dump_buffer(nv_fv_buff+offset, 0x100);
+  #endif
   while (offset < (gStoreHeader.Size + gVolumeHeader.HeaderLength))
   {
     klvar_entry_t *entry;
@@ -952,15 +884,21 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len, list_t *head) {
       entry->offset = offset;
       entry->headerSize = sizeof(DEFAULT_VARIABLE_HEADER);
       entry->header = (char *)malloc (sizeof(DEFAULT_VARIABLE_HEADER));
-      DBG_INFO ("[%s]DEFAULT_VARIABLE offset=0x%x !\n", __func__, offset); 
+      #if DEBUG 
+      DBG_INFO ("[%s]DEFAULT_VARIABLE offset=0x%x !\n", __func__, offset);  
+      #endif
       memcpy( entry->header, nv_fv_buff+offset, hdrsize);
       offset += hdrsize;
-      dump_buffer(entry->header, hdrsize);
+      #if DEBUG 
+      dump_buffer(entry->header, hdrsize); 
+      #endif
       if (((DEFAULT_VARIABLE_HEADER *)entry->header)->StartId == INVALID_START_ID) {
         break;
       }
       if (((DEFAULT_VARIABLE_HEADER *)entry->header)->StartId != VALID_START_ID) {
-        DBG_INFO ("[%s]START_ID ERR, StartId=0x%x !\n", __func__, ((DEFAULT_VARIABLE_HEADER *)entry->header)->StartId);
+        #if DEBUG 
+        DBG_INFO ("[%s]START_ID ERR, StartId=0x%x !\n", __func__, ((DEFAULT_VARIABLE_HEADER *)entry->header)->StartId); 
+        #endif
         return 5;
       }
       entry->nameSize = ((DEFAULT_VARIABLE_HEADER *)entry->header)->NameSize;
@@ -969,15 +907,21 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len, list_t *head) {
       entry->offset = offset;
       entry->headerSize = sizeof(AUTHENTICATED_VARIABLE_HEADER);
       entry->header = (char *)malloc (sizeof(AUTHENTICATED_VARIABLE_HEADER));
-      DBG_INFO ("[%s]AUTHENTICATED_VARIABLE offset=0x%x !\n", __func__, offset); 
+      #if DEBUG 
+      DBG_INFO ("[%s]AUTHENTICATED_VARIABLE offset=0x%x !\n", __func__, offset);  
+      #endif
       memcpy( entry->header, nv_fv_buff+offset, hdrsize);
       offset += hdrsize;
+      #if DEBUG 
       dump_buffer(entry->header, hdrsize);
+      #endif
       if (((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->StartId == INVALID_START_ID) {
         break;
       }
       if (((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->StartId != VALID_START_ID) {
-        DBG_INFO ("[%s]START_ID ERR, StartId=0x%x !\n", __func__, ((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->StartId);
+        #if DEBUG 
+        DBG_INFO ("[%s]START_ID ERR, StartId=0x%x !\n", __func__, ((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->StartId); 
+        #endif
         return 5;
       }
       entry->nameSize = ((AUTHENTICATED_VARIABLE_HEADER *)entry->header)->NameSize;
@@ -986,12 +930,16 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len, list_t *head) {
     entry->name = (char *)malloc( entry->nameSize);
     memcpy( entry->name, nv_fv_buff+offset, entry->nameSize);
     offset += entry->nameSize;
+    #if DEBUG
     dump_buffer(entry->name, entry->nameSize);
+    #endif
 
     entry->data = (char *)malloc( entry->dataSize);
     memcpy( entry->data, nv_fv_buff+offset, entry->dataSize);
     offset += entry->dataSize;
+    #if DEBUG 
     dump_buffer(entry->data, entry->dataSize);
+    #endif
     
     offset = _INTSIZEOF(offset);
     entry->totalSize = offset - entry->offset;
@@ -999,14 +947,17 @@ int getVariableInfo( uint8_t *nv_fv_buff, uint32_t buff_len, list_t *head) {
     //add to list
     list_add_tail(&(entry->list), head);
   }
-  DBG_INFO ("[%s] end !\n", __func__);
-
+  #if DEBUG 
+  DBG_INFO ("[%s] end !\n", __func__); 
   list_t *pos;
   klvar_entry_t *var;
   list_for_each(pos, head) {
     var = list_entry(pos, klvar_entry_t, list);
-    DBG_INFO ("[%s] var->offset= 0x%x !\n", __func__, var->offset);
+    
+    DBG_INFO ("[%s] var->offset= 0x%x !\n", __func__, var->offset); 
+    
   }
+  #endif
   return 0;
 }
 // parse the data of raw variable data, i.e. data from the VARIABLE area of the BIOS.
@@ -1031,9 +982,13 @@ int parse_nv_frame(uint8_t *nv_fv_buff, uint32_t buff_len) {
     }
     //
     GetAuthenticatedFlag((void *)nv_fv_buff);
-    DBG_INFO ("[%s] var_type=%d !\n", __func__, var_type);
+    #if DEBUG 
+    DBG_INFO ("[%s] var_type=%d !\n", __func__, var_type); 
+    #endif
     getVariableInfo(nv_fv_buff, buff_len, &var_list);
-    DBG_INFO ("[%s] list size =%zd !\n", __func__, list_size(&var_list));
+    #if DEBUG 
+    DBG_INFO ("[%s] list size =%zd !\n", __func__, list_size(&var_list)); 
+    #endif
 
   } else if (nvtype == STORE_HEADER) {
     DBG_ERR ("[%s]Not support nv type(STORE_HEADER)!\n",__func__);
@@ -1071,7 +1026,9 @@ int get_variable_var (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *
   offset    = 0;
 
   //DBG_PROG ("[%s] Parsing the uefi non-volatile variable...\n", BOOTMGR_TOOL_NAME);
-  DBG_INFO ("Parsing the uefi non-volatile variable...\n");
+  #if DEBUG 
+  DBG_INFO ("Parsing the uefi non-volatile variable...\n"); 
+  #endif
   ptr = nv_fv_buff;
 
 
@@ -1090,12 +1047,16 @@ int get_variable_var (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *
 	  	GetVariabeInf(ptr , NULL , (uint8_t**)&var_name , &namesize , NULL);
         //wprintf (L"Var Name: %s\n", var_name);
         if (wstrncmp (var_name, seek_var_name, namesize) == 0) {
-          DBG_INFO ("KlSetup variable found.\n");
+          #if DEBUG 
+          DBG_INFO ("KlSetup variable found.\n"); 
+          #endif
           //var_setup = (SETUP_DATA *)((uint8_t *)var_hdr + sizeof(VARIABLE_HEADER(var_type)) + var_hdr->NameSize);
           ret = 0;
           var_info->IsValid = 1;
           var_info->Offset  = (uint32_t)(ptr - nv_fv_buff);
-          DBG_INFO ("Var Offset: %#x\n", var_info->Offset);
+          #if DEBUG 
+          DBG_INFO ("Var Offset: %#x\n", var_info->Offset); 
+          #endif
           //break;
         }
       }
@@ -1109,78 +1070,6 @@ int get_variable_var (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *
 
   return ret;
 }
-
-#if 0 
-int get_network_stack_var (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *var_info)
-{
-  int             ret;
-  uint            var_size;
-  int             offset;
-  uint8_t         *ptr;
-  wchar_t         *var_name;
-  UINT32                          namesize;
-  //VARIABLE_HEADER *var_hdr;
-  //SETUP_DATA      *var_setup = NULL;
-
-  if (!nv_fv_buff || !var_info) {
-    return 1;
-  }
-
-  if (chk_nvfv (nv_fv_buff, buff_len) != 0) {
-    DBG_ERR ("Inalid NV_FV!\n");
-    return 1;
-  }
-
-  ret       = -1;
-  ptr       = NULL;
-  var_name  = NULL;
-  //var_hdr   = NULL;
-  offset    = 0;
-
-  //DBG_PROG ("[%s] Parsing the uefi non-volatile variable...\n", BOOTMGR_TOOL_NAME);
-  DBG_INFO ("Parsing the uefi non-volatile variable...\n");
-  ptr = nv_fv_buff;
-  locate_first_var (nv_fv_buff, buff_len, &offset);
-  if (offset > 0) {
-    ptr += offset;
-  }
-
-  while ((uint32_t)(ptr - nv_fv_buff) < buff_len) {
-    if (ptr[0] == 0xAA && ptr[1] == 0x55) {
-      //var_hdr = (VARIABLE_HEADER *)ptr;
-
-      //var_size = sizeof(VARIABLE_HEADER) + var_hdr->NameSize + var_hdr->DataSize; 
-	  GetVariabeInf(ptr , &var_size , (uint8_t**)&var_name , &namesize , NULL);      
-#if defined(__aarch64__) || defined(__mips__) || defined(__loongarch__)
-      var_size = _INTSIZEOF(var_size);
-#endif
-      
-      if (ptr[2] == VAR_ADDED) {        
-        GetVariabeInf(ptr , NULL , (uint8_t**)&var_name , &namesize , NULL);
-        //wprintf (L"Var Name: %s\n", var_name);
-        if (wstrncmp (var_name, network_stack_var_name, namesize) == 0) {
-          DBG_INFO ("NetworkStack variable found.\n");
-          //var_setup = (SETUP_DATA *)((uint8_t *)var_hdr + sizeof(VARIABLE_HEADER) + var_hdr->NameSize);
-          ret = 0;
-          var_info->IsValid = 1;
-          var_info->Offset  = (uint32_t)(ptr - nv_fv_buff);
-          DBG_INFO ("Var Offset: %#x\n", var_info->Offset);
-          //break;
-        }
-      }
-      //var_hdr = (VARIABLE_HEADER *)((uint8_t *)var_hdr + var_size);
-      ptr = ((uint8_t *)ptr + var_size);
-
-    } else {
-      //ptr += 1;
-      break;
-    }
-  }
-
-  return ret;
-}
-
-#endif
 
 //
 // BUG: This fuction should print value of "BootOrder" variable
@@ -1203,7 +1092,9 @@ int display_boot_order (uint8_t *nv_fv_buff, KLSETUP_VAR_INFO *var_info)
 
   
   
-  DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities[0]);
+  #if DEBUG 
+  DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities[0]); 
+  #endif
 
   GetVariabeInf(nv_fv_buff + var_info->Offset , NULL , NULL , NULL , (uint8_t**)&data);
 
@@ -1388,7 +1279,7 @@ int get_curr_pxe_state (uint8_t *nv_fv_buff, KLSETUP_VAR_INFO *var_info, short *
   
   data    = NULL;
   //var_hdr = (VARIABLE_HEADER *)(nv_fv_buff + var_info->Offset);  
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
+  //#if DEBUG DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities); #endif
   //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
   //data = (NETWORK_STACK *)(nv_fv_buff + var_info->Offset + offset);
   
@@ -1411,7 +1302,7 @@ int get_curr_NETWORKSTACK_state (uint8_t *nv_fv_buff, KLSETUP_VAR_INFO *var_info
   data    = NULL;
   //var_hdr = (VARIABLE_HEADER *)(nv_fv_buff + var_info->Offset);
 
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
+  //#if DEBUG DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities); #endif
   //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
   //data = (NETWORK_STACK *)(nv_fv_buff + var_info->Offset + offset);
  GetVariabeInf(nv_fv_buff + var_info->Offset , NULL , NULL , NULL , (uint8_t**)&data);
@@ -1435,7 +1326,7 @@ int get_curr_KlSetup_state (uint8_t *nv_fv_buff, KLSETUP_VAR_INFO *var_info, SET
   data    = NULL;
   //var_hdr = (VARIABLE_HEADER *)(nv_fv_buff + var_info->Offset);
 
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
+  //#if DEBUG DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities); #endif
   //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
   //data = (SETUP_DATA *)(nv_fv_buff + var_info->Offset + offset);
  GetVariabeInf(nv_fv_buff + var_info->Offset , NULL , NULL , NULL , (uint8_t**)&data);
@@ -1462,7 +1353,9 @@ int locate_blank_of_nv (uint8_t *nv_fv_buff, uint32_t buff_len, int *offset)
   ptr       = NULL;
   //var_setup = NULL;
 
-  DBG_INFO ("Parsing the uefi non-volatile variable...\n");
+  #if DEBUG 
+  DBG_INFO ("Parsing the uefi non-volatile variable...\n"); 
+  #endif
   *offset = 0;
   ptr = nv_fv_buff;
   locate_first_var (nv_fv_buff, buff_len, offset);
@@ -1477,7 +1370,7 @@ int locate_blank_of_nv (uint8_t *nv_fv_buff, uint32_t buff_len, int *offset)
       var_size = _INTSIZEOF(var_size);
 #endif
       ptr = ((uint8_t *)ptr + var_size);
-      //DBG_INFO ("Offset of next var: %#x\n", ptr - nv_fv_buff);
+      //#if DEBUG DBG_INFO ("Offset of next var: %#x\n", ptr - nv_fv_buff); #endif
 
     } else {
       //ptr += 1;
@@ -1485,7 +1378,7 @@ int locate_blank_of_nv (uint8_t *nv_fv_buff, uint32_t buff_len, int *offset)
     }
   }
   *offset = ptr - nv_fv_buff;
-  //DBG_INFO ("Start of the blank in NV_FV: %#x\n", *offset);
+  //#if DEBUG DBG_INFO ("Start of the blank in NV_FV: %#x\n", *offset); #endif
 
   return ret;
 }
@@ -1503,7 +1396,7 @@ int set_var_state (int var_off_in_nv, uint8_t state)
   data[2] = state;
   dump_buffer(data, sizeof(data));
   offset = var_off_in_nv;
-  DBG_INFO ("[set_var_state] offset: %x\n", offset);
+  DBG_INFO ("[set_var_state] offset: %x\n", offset); 
   // ret = flash_write (data, offset, sizeof(data));
 
   return ret;
@@ -1514,21 +1407,25 @@ int write_variable (int old_offset, int new_offset, uint8_t *data, int data_size
   uint32_t       offset = 0;
   int            ret;
 
-  DBG_INFO ("old_offset = %#x, new_offset = %#x\n", old_offset, new_offset);
+  DBG_INFO ("old_offset = %#x, new_offset = %#x\n", old_offset, new_offset); 
 //printf ("old_offset = %#x, new_offset = %#x\n", old_offset, new_offset);
 
   // Change state of variable from 0x3F to 0x3E
-  DBG_INFO ("Changing state of old variable to 0x3E...\n");
+  #if DEBUG 
+  DBG_INFO ("Changing state of old variable to 0x3E...\n"); 
+  #endif
   //printf ("Changing state of old variable to 0x3E...\n");
   ret = set_var_state (old_offset, VAR_IN_DELETED_TRANSITION);
   if (ret != 0) {
     return ret;
   }  
-  DBG_INFO ("The state of old variable changed.\n");
+  #if DEBUG 
+  DBG_INFO ("The state of old variable changed.\n"); 
+  #endif
   //printf ("The state of old variable changed.\n");
-//   offset = get_nv_fv_offset () + new_offset;
+//   offset = get_nv_fv_offset () + new_offset; 
   dump_buffer(data,data_size);
-  DBG_INFO ("data_size: %#x, offset: %#x\n", offset, data_size);
+  DBG_INFO ("data_size: %#x, offset: %#x\n", offset, data_size); 
 //  //printf("data_size: %#x, offset: %#x\n", offset, data_size);
 //   ret = flash_write (data, offset, data_size);
 //   if (ret != 0) {
@@ -1541,538 +1438,18 @@ int write_variable (int old_offset, int new_offset, uint8_t *data, int data_size
   // }
 
   // Change state of variable from 0x3E to 0x3C
-  DBG_INFO ("Changing state of old variable to 0x3C\n");
+  #if DEBUG 
+  DBG_INFO ("Changing state of old variable to 0x3C\n"); 
+  #endif
 //printf ("Changing state of old variable to 0x3C\n");
   ret = set_var_state (old_offset, VAR_DELETED);
-  DBG_INFO ("The state of old variable changed.\n");
+  #if DEBUG 
+  DBG_INFO ("The state of old variable changed.\n"); 
+  #endif
   //printf ("The state of old variable changed.\n");
 
   return ret;
 }
-#if 0
-int change_first_boot_dev (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *var_info, short new_first_dev)
-{
-  SETUP_DATA        * data;
-  int                 offset;
-  short             * boot_options;
-  int                 var_size;
-  int                 index;
-  int                 max_dev_no;
-  uint8_t           * new_var;
-  int                 blank_pos;
-  int                 ret;
-  uint8_t           * ptr;  
-  if (!nv_fv_buff || !var_info) {
-    return 1;
-  }
-
-  //
-  // Check the new dev number to set as the first boot dev
-  // 
-  max_dev_no = sizeof(data->UefiPriorities)/sizeof(typeof(data->UefiPriorities[0])) - 1;
-  if (new_first_dev > max_dev_no || new_first_dev < 0) {
-    return 1;
-  }
-
-  new_var      = NULL;
-  data         = NULL;
-  boot_options = NULL;
-  ptr          = (nv_fv_buff + var_info->Offset);
-  GetVariabeInf(nv_fv_buff + var_info->Offset , &var_size , NULL , NULL , (uint8_t**)&data);
-#if defined(__aarch64__) || defined(__mips__) || defined(__loongarch__)
-  var_size = _INTSIZEOF(var_size);
-#endif
-
-  //
-  // Locate the position of the new boot dev in BootOrder
-  //
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
-
-  boot_options = data->UefiPriorities;
-  for (index = 0; index < sizeof(data->UefiPriorities)/sizeof(typeof(data->UefiPriorities[0])); index++) {
-    INFO ("%04x, ", *boot_options);
-    if (new_first_dev == *boot_options++)
-      break;
-  }
-  INFO ("\n");
-  if (index > max_dev_no) {
-    DBG_ERR ("No. %d device not found!\n", new_first_dev);
-    return 1;
-  }
-
-  new_var = (uint8_t *)malloc(var_size);
-  if (!new_var) {
-    DBG_ERR ("Failed to allocate buffer!\n");
-    return 1;
-  }
-  memset (new_var, 0, var_size);
-  
-  //
-  // Create new KlSetup variable with new UefiPriorities
-  //
-  memcpy (new_var, (void *)ptr, var_size);
-
-  GetVariabeInf(new_var , &var_size , NULL , NULL , (uint8_t**)&data);
-  data->UefiPriorities[index] = data->UefiPriorities[0];
-  data->UefiPriorities[0]     = new_first_dev;
-  data->FBO_Init              = 0x01;
-
-  //
-  // Locate the blank area in the NV_FV for write a new KlSetup variable
-  //
-  blank_pos = 0;
-  locate_blank_of_nv (nv_fv_buff, buff_len, &blank_pos);
-  if (blank_pos <= 0) {
-    DBG_ERR ("Failed to get the offset of the last variable in NV_FV!\n");
-    return 1;
-  }
-  DBG_INFO ("Start of blank of NV: %#x\n", blank_pos);
-
-  //
-  // Write the new KlSetup variable into NV_FV
-  //
-  DBG_INFO ("Writing new KlSetup variable...\n");
-  //dump_buffer (new_var, var_size);
-  ret = write_variable (var_info->Offset, blank_pos, new_var, var_size);
-  if (ret != 0) {
-    DBG_ERR ("Failed write variable data into flash.\n");
-  } else {
-    DBG_INFO ("New KlSetup variable has been written into flash.\n");
-  }
-
-  free (new_var);
-
-  return ret;  
-}
-
-
-int change1_first_boot_dev (uint8_t *nv_fv_buff, uint32_t buff_len,KLSETUP_VAR_INFO *var_info,BootOrder  *BootOrdervar,UINT16 *data1,CHAR8 *type,CHAR8 *typeanother)
-
-{
-  //SETUP_DATA        * data;
-  int                 offset;
-  short             * boot_options;
-  int                 var_size;
-  int                 index;
-  int                 max_dev_no;
-  //UINT16           * new_var;
-  uint8_t           * new_var=NULL;
-  uint8_t           * data;
-  int                 blank_pos;
-  int                 ret;
-  uint8_t           * ptr; 
-  UINT16                    NUM;
-UINT16          temp ;
- uint8_t                 i=0;
-UINT16           A,B;
-
-int x=0,y=0;
-  if (!nv_fv_buff || !var_info) {
-    return 1;
-  }
-ptr          = (nv_fv_buff + var_info->Offset);
-GetVariabeInf(nv_fv_buff + var_info->Offset , &var_size , NULL , NULL , (uint8_t**)&data);
-#if defined(__aarch64__) || defined(__mips__) || defined(__loongarch__)
-  var_size = _INTSIZEOF(var_size);
-#endif
-//printf("var_size=%d\n",var_size);
-  new_var = (uint8_t *)malloc(var_size);
-  if (!new_var) {
-    DBG_ERR ("Failed to allocate buffer!\n");
-    return 1;
-  }
-
-  memset (new_var, 0, var_size);
-  memcpy (new_var, (void *)ptr, var_size);
-  GetVariabeInf(new_var , &var_size , NULL , NULL , (uint8_t**)&data);
-//new_var=data;
-  //
-  // Check the new dev number to set as the first boot dev
-  // 
-  //max_dev_no = sizeof(data->UefiPriorities)/sizeof(typeof(data->UefiPriorities[0])) - 1;
-/*  if (new_first_dev > max_dev_no || new_first_dev < 0) {
-    return 1;
-  }
-
-  new_var      = NULL;
-  data         = NULL;
-  boot_options = NULL;
-  ptr          = (nv_fv_buff + var_info->Offset);
-  
-
-  //
-  // Locate the position of the new boot dev in BootOrder
-  //
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
-
-  boot_options = data->UefiPriorities;
-  for (index = 0; index < sizeof(data->UefiPriorities)/sizeof(typeof(data->UefiPriorities[0])); index++) {
-    INFO ("%04x, ", *boot_options);
-    if (new_first_dev == *boot_options++)
-      break;
-  }
-  INFO ("\n");
-  if (index > max_dev_no) {
-    DBG_ERR ("No. %d device not found!\n", new_first_dev);
-    return 1;
-  }
-
-*/
-
-//printf("BootOrdervar[0].type=%s,type=%s,typeanother=%s\n",BootOrdervar[1].type,type,typeanother);
-x=strcmp(BootOrdervar[0].type,type);
-y=strcmp(BootOrdervar[0].type,typeanother);
-//printf("x=%d,y=%d",x,y);
-  //if((strcmp(BootOrdervar[0].type,type)) || (strcmp(BootOrdervar[0].type,typeanother)))
-if((x==0)||(y==0))
-  {
-    printf("Already In this boot order!\n\r");
-	return 1;
-  }
-  else
-  {
-    //NUM=*(((UINT16 *)new_var)+index);
-
-   temp =*(((UINT16 *)data));
-//printf("!!temp=%x\n",temp);
-    //BootOrder temp=BootOrdervar[0];
-    //BootOrdervar[0]=type;
-    for(i=0;i<10;i++)
-      {
-         
-        if(BootOrdervar[i].type==NULL)
-       continue;
-//printf("!!i=%d!!\n",i);
-		x=strcmp(BootOrdervar[i].type,type);
-		y=strcmp(BootOrdervar[i].type,typeanother);
-        if((x==0)||(y==0))
-           {//printf("same\n");
-            A=*((UINT16 *)data);
-			B=*((((UINT16 *)data)+i));
-			//printf("!!A=%x\n",A);
-			//printf("!!B=%x\n",B);
-			*((UINT16 *)data)=B;
-            *((((UINT16 *)data)+i))=temp;
-            //BootOrdervar[i]=temp;
-            break;
-           }
-      }
-    
-   }
-
-
-
-  /*new_var = (uint8_t *)malloc(var_size);
-  if (!new_var) {
-    DBG_ERR ("Failed to allocate buffer!\n");
-    return 1;
-  }
-  memset (new_var, 0, var_size);
-  
-  //
-  // Create new KlSetup variable with new UefiPriorities
-  //
-  memcpy (new_var, (void *)ptr, var_size);
-
-  GetVariabeInf(new_var , &var_size , NULL , NULL , (uint8_t**)&data);
-  data->UefiPriorities[index] = data->UefiPriorities[0];
-  data->UefiPriorities[0]     = new_first_dev;
-  data->FBO_Init              = 0x01;
-*/
-
-  //
-  // Locate the blank area in the NV_FV for write a new KlSetup variable
-  //
-//printf("!!LOL Noproblem!!\n");
-  blank_pos = 0;
-  locate_blank_of_nv (nv_fv_buff, buff_len, &blank_pos);
-  if (blank_pos <= 0) {
-    DBG_ERR ("Failed to get the offset of the last variable in NV_FV!\n");
-    return 1;
-  }
-  DBG_INFO ("Start of blank of NV: %#x\n", blank_pos);
-
-  //
-  // Write the new KlSetup variable into NV_FV
-  //
-  DBG_INFO ("Writing new KlSetup variable...\n");
-  //dump_buffer (new_var, var_size);
-//printf("!!LOL Noproblem write_variable in!!\n");
-  ret = write_variable (var_info->Offset, blank_pos, new_var, var_size);
-//printf("!!LOL Noproblem write_variable out!!\n");
-  if (ret != 0) {
-    DBG_ERR ("Failed write variable data into flash.\n");
-    printf ("Failed write variable data into flash.\n");
-  } else {
-    DBG_INFO ("New KlSetup variable has been written into flash.\n");
-    printf ("New  variable has been written into flash.\n");
-  }
-
-  //free (new_var);
-
-  return ret;  
-}
-
-
-int change_NETWORKSTACK_state (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *var_info, NETWORK_STACK new_state)
-{
-  //VARIABLE_HEADER   *var_hdr;
-  NETWORK_STACK        *data;
-  int               offset;
-  short             numa;
-  int               var_size;
-  int               index;
-  int               max_dev_no;
-  uint8_t           *new_var;
-  int               blank_pos;
-  int               ret;
-  uint8_t           * ptr;
-
-  if (!nv_fv_buff || !var_info) {
-    return 1;
-  }
-  new_var      = NULL;
-  data         = NULL;
-
-  //var_hdr  = (VARIABLE_HEADER *)(nv_fv_buff + var_info->Offset);
-
-  //var_size = sizeof(VARIABLE_HEADER) + var_hdr->NameSize + var_hdr->DataSize;
-  ptr          = (nv_fv_buff + var_info->Offset);
-  GetVariabeInf(nv_fv_buff + var_info->Offset , &var_size , NULL , NULL , (uint8_t**)&data);
-#if defined(__aarch64__) || defined(__mips__) || defined(__loongarch__)
-  var_size = _INTSIZEOF(var_size);
-#endif
-
-  //
-  // Locate the position of the new boot dev in BootOrder
-  //
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
-  //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
-  //data = (NETWORK_STACK *)(nv_fv_buff + var_info->Offset + offset);
-
-  new_var = (uint8_t *)malloc(var_size);
-  if (!new_var) {
-    DBG_ERR ("Failed to allocate buffer!\n");
-    return 1;
-  }
-  memset (new_var, 0, var_size);
-  
-  //
-  // Create new KlSetup variable with new UefiPriorities
-  //
-  //memcpy (new_var, (void *)var_hdr, var_size);
-  //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
-  //data = (NETWORK_STACK *)(new_var + offset);
-  memcpy (new_var, (void *)ptr, var_size);
-
-  GetVariabeInf(new_var , &var_size , NULL , NULL , (uint8_t**)&data);
-  *data= new_state;
-printf("!!new_NETWORKSTACK_state=%d\n",data->Enable);
-  //
-  // Locate the blank area in the NV_FV for write a new KlSetup variable
-  //
-  blank_pos = 0;
-  locate_blank_of_nv (nv_fv_buff, buff_len, &blank_pos);
-  if (blank_pos <= 0) {
-    DBG_ERR ("Failed to get the offset of the last variable in NV_FV!\n");
-    return 1;
-  }
-  DBG_INFO ("Start of blank of NV: %#x\n", blank_pos);
-
-  //
-  // Write the new KlSetup variable into NV_FV
-  //
-  DBG_INFO ("Writing new NETWORK_STACK variable...\n");
-  //dump_buffer (new_var, var_size);
-  ret = write_variable (var_info->Offset, blank_pos, new_var, var_size);
-  if (ret != 0) {
-    DBG_ERR ("Failed write variable data into flash.\n");
-  } else {
-    DBG_INFO ("New NETWORKSTACK variable has been written into flash.\n");
-  }
-
-  free (new_var);
-
-  return ret;  
-}
-
-
-
-
-
-
-int change_KlSetup_state (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *var_info, SETUP_DATA new_state)
-{
-  //VARIABLE_HEADER   *var_hdr;
-  SETUP_DATA        *data;
-  int               offset;
-  short             numa;
-  int               var_size;
-  int               index;
-  int               max_dev_no;
-  uint8_t           *new_var;
-  int               blank_pos;
-  int               ret;
-  uint8_t           * ptr;
-
-  if (!nv_fv_buff || !var_info) {
-    return 1;
-  }
-  new_var      = NULL;
-  data         = NULL;
-
-  //var_hdr  = (VARIABLE_HEADER *)(nv_fv_buff + var_info->Offset);
-
-  //var_size = sizeof(VARIABLE_HEADER) + var_hdr->NameSize + var_hdr->DataSize;  
-   ptr          = (nv_fv_buff + var_info->Offset);
-  GetVariabeInf(nv_fv_buff + var_info->Offset , &var_size , NULL , NULL , (uint8_t**)&data);    
-#if defined(__aarch64__) || defined(__mips__) || defined(__loongarch__)
-  var_size = _INTSIZEOF(var_size);
-#endif
-
-  //
-  // Locate the position of the new boot dev in BootOrder
-  //
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
-  //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
-  //data = (SETUP_DATA *)(nv_fv_buff + var_info->Offset + offset);
-
-  new_var = (uint8_t *)malloc(var_size);
-  if (!new_var) {
-    DBG_ERR ("Failed to allocate buffer!\n");
-    return 1;
-  }
-  memset (new_var, 0, var_size);
-  
-  //
-  // Create new KlSetup variable with new UefiPriorities
-  //
-  //memcpy (new_var, (void *)var_hdr, var_size);
-  //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
-  //data = (SETUP_DATA *)(new_var + offset);
-    memcpy (new_var, (void *)ptr, var_size);
-
-  GetVariabeInf(new_var , &var_size , NULL , NULL , (uint8_t**)&data);
-  *data= new_state;
-//printf("!!new_KlSetup_NumaEn_state=%d\n",data->NumaEn);
-  //
-  // Locate the blank area in the NV_FV for write a new KlSetup variable
-  //
-  blank_pos = 0;
-  locate_blank_of_nv (nv_fv_buff, buff_len, &blank_pos);
-  if (blank_pos <= 0) {
-    DBG_ERR ("Failed to get the offset of the last variable in NV_FV!\n");
-    return 1;
-  }
-  DBG_INFO ("Start of blank of NV: %#x\n", blank_pos);
-
-  //
-  // Write the new KlSetup variable into NV_FV
-  //
-  DBG_INFO ("Writing new KlSetup variable...\n");
-  //dump_buffer (new_var, var_size);
-  ret = write_variable (var_info->Offset, blank_pos, new_var, var_size);
-  if (ret != 0) {
-    DBG_ERR ("Failed write variable data into flash.\n");
-  } else {
-    DBG_INFO ("New KlSetup variable has been written into flash.\n");
-  }
-
-  free (new_var);
-
-  return ret;  
-}
-
-
-int change_setup_default1 (uint8_t *nv_fv_buff, uint32_t buff_len, KLSETUP_VAR_INFO *var_info)
-{
-  //VARIABLE_HEADER   *var_hdr;
-  SETUP_DATA        *data;
-  int               offset;
-  short             numa;
-  int               var_size;
-  int               index;
-  int               max_dev_no;
-  uint8_t           *new_var;
-  int               blank_pos;
-  int               ret;
-  uint8_t           * ptr;
-
-  if (!nv_fv_buff || !var_info) {
-    return 1;
-  }
-
-  new_var      = NULL;
-  data         = NULL;
-
-  //var_hdr  = (VARIABLE_HEADER *)(nv_fv_buff + var_info->Offset);
-
-  //var_size = sizeof(VARIABLE_HEADER) + var_hdr->NameSize + var_hdr->DataSize;  
-      ptr          = (nv_fv_buff + var_info->Offset);
-  GetVariabeInf(nv_fv_buff + var_info->Offset , &var_size , NULL , NULL , (uint8_t**)&data);
-#if defined(__aarch64__) || defined(__mips__) || defined(__loongarch__)
-  var_size = _INTSIZEOF(var_size);
-#endif
-
-  //
-  // Locate the position of the new boot dev in BootOrder
-  //
-  //DBG_INFO ("Offset of UefiPriorities: %#x\n", ((SETUP_DATA *)0)->UefiPriorities);
-  //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
-  //data = (SETUP_DATA *)(nv_fv_buff + var_info->Offset + offset);
-
-  new_var = (uint8_t *)malloc(var_size);
-  if (!new_var) {
-    DBG_ERR ("Failed to allocate buffer!\n");
-    return 1;
-  }
-  memset (new_var, 0, var_size);
-  
-  //
-  // Create new KlSetup variable with new UefiPriorities
-  //
-  //memcpy (new_var, (void *)var_hdr, var_size);
-  //offset = sizeof(VARIABLE_HEADER) + var_hdr->NameSize;
-  //data = (SETUP_DATA *)(new_var + offset);
-  memcpy (new_var, (void *)ptr, var_size);
-
-  GetVariabeInf(new_var , &var_size , NULL , NULL , (uint8_t**)&data);
-  data->UefiPriorities[0]= 0;
-  data->UefiPriorities[1]= 3;
-  data->UefiPriorities[2]= 2;
-  data->UefiPriorities[3]= 4;
-  data->UefiPriorities[4]= 1;
-  data->UefiPriorities[5]= 6;
-  data->UefiPriorities[6]= 5;
-  data->FBO_Init= 0x01;
-  //
-  // Locate the blank area in the NV_FV for write a new KlSetup variable
-  //
-  blank_pos = 0;
-  locate_blank_of_nv (nv_fv_buff, buff_len, &blank_pos);
-  if (blank_pos <= 0) {
-    DBG_ERR ("Failed to get the offset of the last variable in NV_FV!\n");
-    return 1;
-  }
-  DBG_INFO ("Start of blank of NV: %#x\n", blank_pos);
-
-  //
-  // Write the new KlSetup variable into NV_FV
-  //
-  DBG_INFO ("Writing new KlSetup variable...\n");
-  //dump_buffer (new_var, var_size);
-  ret = write_variable (var_info->Offset, blank_pos, new_var, var_size);
-  if (ret != 0) {
-    DBG_ERR ("Failed write variable data into flash.\n");
-  } else {
-    DBG_INFO ("New KlSetup variable has been written into flash.\n");
-  }
-
-  free (new_var);
-
-  return ret;  
-}
-#endif
 
 int is_have_name(const char *name) {
   int ret = 0;
@@ -2081,7 +1458,9 @@ int is_have_name(const char *name) {
   char ret_name[NAME_MAX+1] = {0};
   klvar_entry_t *var;
   
-  DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  #if DEBUG 
+  DBG_INFO ("[%s] name= %s begin!\n", __func__, name); 
+  #endif
   list_for_each(pos, &var_list) {
     var = list_entry(pos, klvar_entry_t, list);
     UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
@@ -2091,7 +1470,9 @@ int is_have_name(const char *name) {
         state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
     }
     if (state != 0x3F) {
-      DBG_INFO ("[%s] state= 0x%x !\n", __func__, state);
+      #if DEBUG 
+      DBG_INFO ("[%s] state= 0x%x !\n", __func__, state); 
+      #endif
       continue;
     }
     if (strcmp(name, ret_name) == 0) {
@@ -2176,7 +1557,7 @@ int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
   list_for_each(pos, &var_list) {
     var = list_entry(pos, klvar_entry_t, list);
     UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
-    // DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+    // #if DEBUG DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name); #endif
     if (var->type == NORMAL_VAR_TYPE) {
         memcpy(&ret_guid, &((DEFAULT_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
         attr = ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes;
@@ -2187,25 +1568,27 @@ int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
         state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
     }
     if (state != 0x3F) {
-      DBG_INFO ("[%s] state= 0x%x !\n", __func__, state);
+      #if DEBUG 
+      DBG_INFO ("[%s] state= 0x%x !\n", __func__, state); 
+      #endif
       continue;
     }
-    // DBG_INFO ("[%s] *attributes= 0x%x !\n", __func__, *attributes);
-    // dump_buffer(&guid,sizeof(efi_guid_t));
-    // dump_buffer(&ret_guid,sizeof(efi_guid_t));
-    // DBG_INFO ("[%s] sizeof(efi_guid_t)= %ld !\n", __func__, sizeof(efi_guid_t));
+
     if (memcmp(&ret_guid, &guid, sizeof(efi_guid_t)) != 0) {
       continue;
     }
-    // dump_buffer((void *)name,strlen(name));
-    // dump_buffer(ret_name,strlen(ret_name));
+
     if (strcmp(name, ret_name) != 0) {
       continue;
     }
 
-    DBG_INFO ("[%s] attr= 0x%x to 0x%x !\n", __func__, attr, attributes);
+    #if DEBUG 
+    DBG_INFO ("[%s] attr= 0x%x to 0x%x !\n", __func__, attr, attributes); 
+    #endif
     if (attr != attributes) {
-      DBG_INFO ("[%s] change attr= 0x%x to 0x%x !\n", __func__, attr, attributes);
+      #if DEBUG 
+      DBG_INFO ("[%s] change attr= 0x%x to 0x%x !\n", __func__, attr, attributes); 
+      #endif
       if (var->type == NORMAL_VAR_TYPE) {
           ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes = attributes;
       } else if (var->type == AUTH_VAR_TYPE) {
@@ -2256,16 +1639,20 @@ int uefivar_set_variable(efi_guid_t guid, const char *name, uint8_t *data,
     }
     if (var->offset + var->headerSize + var->nameSize + var->dataSize > buff_len)
     {
-      DBG_INFO("[%s] > buf_len !\n", __func__);
+      DBG_ERR("[%s] > buf_len !\n", __func__);
       return -1;
     }
     
     memcpy( nv_fv_buff + var->offset + var->headerSize + var->nameSize, var->data, var->dataSize);
+    #if DEBUG 
     dump_buffer(nv_fv_buff + var->offset + var->headerSize + var->nameSize, var->dataSize);
+    #endif
     ret = 1;
     return ret;
   }
-  DBG_INFO("[%s] no match !\n", __func__);
+  #if DEBUG 
+  DBG_INFO("[%s] no match !\n", __func__); 
+  #endif
 
   return -1;
 }
@@ -2278,7 +1665,9 @@ static int is_bootx(const char *name, int *order) {
       isxdigit(num[0]) && isxdigit(num[1]) &&
       isxdigit(num[2]) && isxdigit(num[3]) ) {
       *order = atoi(num);
-      DBG_INFO ("[%s] order= %d !\n", __func__, *order);
+      #if DEBUG 
+      DBG_INFO ("[%s] order= %d !\n", __func__, *order); 
+      #endif
     return 1;
   }
 		return 0;  
@@ -2294,58 +1683,74 @@ int uefivar_del_variable(efi_guid_t guid, const char *name, uint8_t *buffer, int
   // uint32_t attr;
   int buflen = len - len;
   int order;
-  DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  #if DEBUG 
+  DBG_INFO ("[%s] name= %s begin!\n", __func__, name); 
+  #endif
   buflen = gVolumeHeader.HeaderLength + sizeof(VARIABLE_STORE_HEADER);
   memcpy(buffer , nv_fv_buff, buflen);
   list_for_each(pos, &var_list) {
     var = list_entry(pos, klvar_entry_t, list);
     UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
-    DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+    #if DEBUG 
+    DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name); 
+    #endif
     if (var->type == NORMAL_VAR_TYPE) {
         memcpy(&ret_guid, &((DEFAULT_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
-        // attr = ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes;
-        // state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
     } else if (var->type == AUTH_VAR_TYPE) {
         memcpy(&ret_guid, &((AUTHENTICATED_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
-        // attr = ((AUTHENTICATED_VARIABLE_HEADER *)var->header)->Attributes;
-        // state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
     }
-    // DBG_INFO ("[%s] *attributes= 0x%x !\n", __func__, *attributes);
-    // dump_buffer(&guid,sizeof(efi_guid_t));
-    // dump_buffer(&ret_guid,sizeof(efi_guid_t));
-    // DBG_INFO ("[%s] sizeof(efi_guid_t)= %ld !\n", __func__, sizeof(efi_guid_t));
+    
     if ((memcmp(&ret_guid, &guid, sizeof(efi_guid_t)) == 0) && (strcmp(name, ret_name) == 0)) {
-      DBG_INFO ("[%s] name continue = %s ret_name= %s !\n", __func__, name, ret_name);
+      #if DEBUG 
+      DBG_INFO ("[%s] name continue = %s ret_name= %s !\n", __func__, name, ret_name); 
+      #endif
       continue;
     }
 
     //change data
     if ((strcmp(ret_name, "BootOrder") == 0) && is_bootx(name, &order))
     {
-      memcpy(buffer + buflen, nv_fv_buff + var->offset, var->totalSize - var->dataSize);
-      buflen += var->totalSize - var->dataSize;
-      int j = 0;
+      int lenhn = 0;
+      if (var->type == NORMAL_VAR_TYPE) {
+        lenhn = sizeof(DEFAULT_VARIABLE_HEADER) + var->nameSize;
+      } else if (var->type == AUTH_VAR_TYPE) {
+        lenhn = sizeof(AUTHENTICATED_VARIABLE_HEADER) + var->nameSize;
+      }
+      memcpy(buffer + buflen, nv_fv_buff + var->offset, lenhn);
+
       for (size_t i = 0; i < var->dataSize/2; i++)
       {
         if (((uint16_t *)var->data)[i] != (uint16_t)order) {
-          memcpy(buffer + buflen + sizeof(uint16_t) * j, var->data + sizeof(uint16_t) * i, sizeof(uint16_t));
-          j++;
+          memcpy(buffer + buflen + lenhn, var->data + sizeof(uint16_t) * i, sizeof(uint16_t));
+          lenhn += sizeof(uint16_t);
         }
       }
-      buflen += var->dataSize;
+      
+      //change data size
+      if (var->type == NORMAL_VAR_TYPE) {
+        ((DEFAULT_VARIABLE_HEADER *)(buffer + buflen))->DataSize = lenhn - sizeof(DEFAULT_VARIABLE_HEADER) - var->nameSize;
+      } else if (var->type == AUTH_VAR_TYPE) {
+        ((AUTHENTICATED_VARIABLE_HEADER *)(buffer + buflen))->DataSize = lenhn - sizeof(AUTHENTICATED_VARIABLE_HEADER) - var->nameSize;
+      }
+      buflen += lenhn;
+      buflen = _INTSIZEOF(buflen);
     } else {
       memcpy(buffer + buflen, nv_fv_buff + var->offset, var->totalSize);
       buflen += var->totalSize;
     }
     if ((uint32_t)buflen > buff_len)
     {
-      DBG_INFO("[%s] ERR: buflen > buff_len  !\n", __func__);
+      #if DEBUG 
+      DBG_INFO("[%s] ERR: buflen > buff_len  !\n", __func__); 
+      #endif
       ret = -1;
       return ret;
     }
     
   }
-  DBG_INFO("[%s] finish !\n", __func__);
+  #if DEBUG 
+  DBG_INFO("[%s] finish !\n", __func__); 
+  #endif
   ret = 1;
   return ret;
 }
@@ -2360,11 +1765,11 @@ int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
   char ret_name[NAME_MAX+1] = {0};
 	efi_guid_t ret_guid;
   klvar_entry_t *var;
-  // DBG_INFO ("[%s] name= %s begin!\n", __func__, name);
+  // #if DEBUG DBG_INFO ("[%s] name= %s begin!\n", __func__, name); #endif
   list_for_each(pos, &var_list) {
     var = list_entry(pos, klvar_entry_t, list);
     UnicodeStrToAsciiStr ((CONST CHAR16 *)var->name, ret_name);
-    // DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+    // #if DEBUG DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name); #endif
     if (var->type == NORMAL_VAR_TYPE) {
         memcpy(&ret_guid, &((DEFAULT_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
         *attributes = ((DEFAULT_VARIABLE_HEADER *)var->header)->Attributes;
@@ -2375,24 +1780,20 @@ int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
         state = ((DEFAULT_VARIABLE_HEADER *)var->header)->State;
     }
     if (state != 0x3F) {
-      // DBG_INFO ("[%s] state= 0x%x !\n", __func__, state);
+      // #if DEBUG DBG_INFO ("[%s] state= 0x%x !\n", __func__, state); #endif
       continue;
     }
-    // DBG_INFO ("[%s] *attributes= 0x%x !\n", __func__, *attributes);
-    // dump_buffer(&guid,sizeof(efi_guid_t));
-    // dump_buffer(&ret_guid,sizeof(efi_guid_t));
-    // DBG_INFO ("[%s] sizeof(efi_guid_t)= %ld !\n", __func__, sizeof(efi_guid_t));
     if (memcmp(&ret_guid, &guid, sizeof(efi_guid_t)) != 0) {
       continue;
     }
-    // dump_buffer((void *)name,strlen(name));
-    // dump_buffer(ret_name,strlen(ret_name));
     if (strcmp(name, ret_name) != 0) {
       continue;
     }
-    // DBG_INFO ("[%s] name= %s !\n", __func__, name);
+    
     if (!(newbuf = calloc(var->dataSize, sizeof (uint8_t)))) {
-      DBG_INFO("could not allocate memory");
+      #if DEBUG 
+      DBG_INFO("could not allocate memory"); 
+      #endif
       *data = newbuf = NULL;
       *data_size = 0;
       return -1;
@@ -2400,12 +1801,15 @@ int uefivar_get_variable(efi_guid_t guid, const char *name, uint8_t **data,
     memcpy(newbuf, var->data, var->dataSize);
     *data = newbuf;
     *data_size = var->dataSize;
-    DBG_INFO ("[%s] find var name= %s !\n", __func__, name);
-    // dump_buffer(*data, *data_size);
+    #if DEBUG 
+    DBG_INFO ("[%s] find var name= %s !\n", __func__, name); 
+    #endif
     ret = 1;
     return ret;
   }
-  DBG_INFO("[%s] no match !\n", __func__);
+  #if DEBUG 
+  DBG_INFO("[%s] no match !\n", __func__); 
+  #endif
   *data = newbuf = NULL;
   *data_size = 0;
   return -1;
@@ -2422,7 +1826,9 @@ int uefivar_get_next_variable_name(efi_guid_t **guid, char **name) {
   if (npos >= list_size(&var_list))
   {
     npos = 0;
-    DBG_INFO ("[%s] npos= %zd !\n", __func__, npos);
+    #if DEBUG 
+    DBG_INFO ("[%s] npos= %zd !\n", __func__, npos); 
+    #endif
     goto end;
   }
   list_for_each(pos, &var_list) {
@@ -2436,16 +1842,18 @@ int uefivar_get_next_variable_name(efi_guid_t **guid, char **name) {
       } else if (var->type == AUTH_VAR_TYPE){
          memcpy(&ret_guid, &((AUTHENTICATED_VARIABLE_HEADER *)var->header)->VendorGuid, sizeof(efi_guid_t));
       }
-      DBG_INFO ("[%s] npos= %zd !\n", __func__, npos);
+      #if DEBUG 
+      DBG_INFO ("[%s] npos= %zd !\n", __func__, npos); 
+      #endif
       npos++;
 
-      DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name);
+      #if DEBUG 
+      DBG_INFO ("[%s] ret_name= %s !\n", __func__, ret_name); 
+      #endif
       *guid = &ret_guid;
 		  *name = ret_name;
-      //ret = 1;
       break;
     }
-    //DBG_INFO ("[%s] i= 0x%zd !\n", __func__, i);
     i++;
   }
 end:
@@ -2454,5 +1862,7 @@ end:
 
 void clear_list(void) {
   INIT_LIST_HEAD(&var_list);
-  DBG_INFO ("[%s] list size =%zd !\n", __func__, list_size(&var_list));
+  #if DEBUG 
+  DBG_INFO ("[%s] list size =%zd !\n", __func__, list_size(&var_list)); 
+  #endif
 }
