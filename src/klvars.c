@@ -36,8 +36,6 @@
 
 static	LIST_HEAD(klvars_list);
 
-KLSETUP_VAR_INFO var_info = {0};
-
 static const char layoutfile[] = "./Layout";
 typedef uint32_t chipoff_t; /* Able to store any addressable offset within a supported flash memory. */
 typedef uint32_t chipsize_t; /* Able to store the number of bytes of any supported flash memory. */
